@@ -20,7 +20,7 @@ jobs:
     - name: Publish to Registry
       uses: elgohr/Publish-Docker-Github-Action@master
       with:
-        name: mlf-core/liver_ct_segmentation
+        name: mlf-core/numorph_nuclei_segmentation
         username: mlf-core
         password: '${{ secrets.MLF_CORE_SYNC_TOKEN}}'
         registry: ghcr.io

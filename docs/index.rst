@@ -1,4 +1,4 @@
-Welcome to liver-ct-segmentation's documentation!
+Welcome to numorph-nuclei-segmentation's documentation!
 ==================================================
 .. toctree::
    :maxdepth: 2

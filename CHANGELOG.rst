@@ -10,7 +10,7 @@ This project adheres to `Semantic Versioning <https://semver.org/>`_.
 
 **Added**
 
-* First implementation of U-net for liver cancer segmentation
+* Initial implementation of the predecessor 3D U-Net
 * Several runs conducted for the mlf-core paper
 
 **Fixed**

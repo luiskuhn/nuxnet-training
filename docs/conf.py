@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 #
-# liver_ct_segmentation documentation build configuration file
+# numorph_nuclei_segmentation documentation build configuration file
 #
 #
 # Note that not all possible configuration values are present in this
@@ -44,7 +44,7 @@ source_suffix = '.rst'
 master_doc = 'index'
 
 # General information about the project.
-project = 'liver-ct-segmentation'
+project = 'numorph-nuclei-segmentation'
 copyright = "2021, Lukas Heumos"
 author = "Lukas Heumos"
 
@@ -98,7 +98,7 @@ html_static_path = ['_static']
 # -- Options for HTMLHelp output ---------------------------------------
 
 # Output file base name for HTML help builder.
-htmlhelp_basename = 'liver-ct-segmentationdoc'
+htmlhelp_basename = 'numorph-nuclei-segmentationdoc'
 
 
 # -- Options for LaTeX output ------------------------------------------
@@ -125,8 +125,8 @@ latex_elements = {
 # (source start file, target name, title, author, documentclass
 # [howto, manual, or own class]).
 latex_documents = [
-    (master_doc, 'liver_ct_segmentation.tex',
-     'liver-ct-segmentation Documentation',
+    (master_doc, 'numorph_nuclei_segmentation.tex',
+     'numorph-nuclei-segmentation Documentation',
      'Lukas Heumos', 'manual'),
 ]
 
@@ -136,8 +136,8 @@ latex_documents = [
 # One entry per manual page. List of tuples
 # (source start file, name, description, authors, manual section).
 man_pages = [
-    (master_doc, 'liver_ct_segmentation',
-     'liver-ct-segmentation Documentation',
+    (master_doc, 'numorph_nuclei_segmentation',
+     'numorph-nuclei-segmentation Documentation',
      [author], 1)
 ]
 
@@ -148,10 +148,10 @@ man_pages = [
 # (source start file, target name, title, author,
 #  dir menu entry, description, category)
 texinfo_documents = [
-    (master_doc, 'liver_ct_segmentation',
-     'liver-ct-segmentation Documentation',
+    (master_doc, 'numorph_nuclei_segmentation',
+     'numorph-nuclei-segmentation Documentation',
      author,
-     'liver_ct_segmentation',
+     'numorph_nuclei_segmentation',
      'One line description of project.',
      'Miscellaneous'),
 ]
