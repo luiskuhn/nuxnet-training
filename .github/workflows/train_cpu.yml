@@ -1,4 +1,4 @@
-name: Train liver-ct-segmentation using CPU
+name: Train numorph-nuclei-segmentation using CPU
 
 on: [push, pull_request]
 
@@ -22,7 +22,7 @@ jobs:
         uses: docker/build-push-action@v1
         with:
           dockerfile: Dockerfile
-          repository: ghcr.io/mlf-core/liver_ct_segmentation
+          repository: ghcr.io/mlf-core/numorph_nuclei_segmentation
           tags: 1.0.0  # <<MLF-CORE_FORCE_BUMP>>
           push: false
 

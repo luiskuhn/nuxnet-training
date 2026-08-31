@@ -133,3 +133,5 @@ dmypy.json
 
 # visual studio code
 .vscode
+
+Miniforge3.sh

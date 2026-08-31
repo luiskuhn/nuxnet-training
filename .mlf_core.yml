@@ -1,7 +1,7 @@
 domain: mlflow
 language: pytorch
-project_slug: liver-ct-segmentation
-project_slug_no_hyphen: liver_ct_segmentation
+project_slug: numorph-nuclei-segmentation
+project_slug_no_hyphen: numorph_nuclei_segmentation
 template_version: '2.0.0 # <<MLF-CORE_NO_BUMP>>'
 template_handle: mlflow-pytorch
 github_username: mlf-core
@@ -12,8 +12,7 @@ is_github_orga: true
 github_orga: mlf-core
 full_name: Lukas Heumos
 email: lukas.heumos@posteo.net
-project_name: liver-ct-segmentation
-project_short_description: Segmentation of liver computed tomography images with a
-  UNET.
+project_name: numorph-nuclei-segmentation
+project_short_description: NuMorph nucleus-marker segmentation with a 3D U-Net.
 version: 1.0.0
 license: MIT

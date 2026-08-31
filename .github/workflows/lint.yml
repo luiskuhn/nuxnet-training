@@ -61,4 +61,4 @@ jobs:
         run: pip install bandit
 
       - name: Run bandit
-        run: bandit -r liver-ct-segmentation -c .bandit.yml
+        run: bandit -r numorph_nuclei_segmentation -c .bandit.yml

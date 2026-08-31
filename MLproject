@@ -4,12 +4,12 @@
 # License: MIT
 
 
-name: liver-ct-segmentation
+name: numorph-nuclei-segmentation
 
 # conda_env: environment.yml
 
 docker_env:
-  image: ghcr.io/mlf-core/liver_ct_segmentation:1.0.0
+  image: ghcr.io/luiskuhn/numorph-nuclei-segmentation:latest
   volumes: ["${PWD}/data:/data"]
   environment: [["MLF_CORE_DOCKER_RUN", "TRUE"],["CUBLAS_WORKSPACE_CONFIG", ":4096:8"]]
 
@@ -17,28 +17,33 @@ entry_points:
   main:
     parameters:
       max_epochs: {type: int, default: 1000}
-      gpus: {type: int, default: 2}
-      accelerator: {type: string, default: "ddp"}
+      devices: {type: string, default: "auto"}
+      accelerator: {type: string, default: "auto"}
+      strategy: {type: string, default: "auto"}
       general-seed: {type: int, default: 0}
       pytorch-seed: {type: int, default: 0}
       log-interval: {type: int, default: 3000}
       lr: {type: float, default: 0.0001}
       training-batch-size: {type: int, default: 1}
       test-batch-size: {type: int, default: 1}
-      class-weights: {type: string, default: '0.2, 1.0, 2.5'}
+      class-weights: {type: string, default: '0.2, 1.0'}
       test-percent: {type: float, default: 0.15}
       test-epochs: {type: int, default: 10}
       dataset-path: {type: string, default: '/data/'}
-      dataset-size: {type: int, default: 131}
       n-channels: {type: int, default: 1}
-      n-class: {type: int, default: 3}
+      n-class: {type: int, default: 2}
       num_workers: {type: int, default: 24}
       dropout-rate: {type: float, default: 0.25}
+      patch-size: {type: string, default: '16,64,64'}
+      normalize-input: {type: string, default: '--normalize-input'}
+      patches-per-volume: {type: int, default: 8}
+      foreground-patch-probability: {type: float, default: 0.8}
     command: |
-          python liver_ct_segmentation/liver_ct_segmentation.py \
+          python -m numorph_nuclei_segmentation.numorph_nuclei_segmentation \
             --max_epochs {max_epochs} \
-            --gpus {gpus} \
+            --devices {devices} \
             --accelerator {accelerator} \
+            --strategy {strategy} \
             --general-seed {general-seed} \
             --pytorch-seed {pytorch-seed} \
             --log-interval {log-interval} \
@@ -49,8 +54,11 @@ entry_points:
             --test-percent {test-percent} \
             --test-epochs {test-epochs} \
             --dataset-path {dataset-path} \
-            --dataset-size {dataset-size} \
             --n-channels {n-channels} \
             --n-class {n-class} \
             --num_workers {num_workers} \
-            --dropout-rate {dropout-rate}
+            --dropout-rate {dropout-rate} \
+            --patch-size {patch-size} \
+            --patches-per-volume {patches-per-volume} \
+            --foreground-patch-probability {foreground-patch-probability} \
+            {normalize-input}
