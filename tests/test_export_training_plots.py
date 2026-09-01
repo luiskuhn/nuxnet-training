@@ -54,6 +54,21 @@ def test_exports_grouped_plots_from_newest_run(tmp_path):
     exporter.export_plots(tmp_path / "logs", output)  # Existing files are safely replaced.
 
 
+def test_exports_deterministic_svg_plots(tmp_path):
+    logs = tmp_path / "logs" / "version_0"
+    write_scalars(logs, {"train_avg_loss": 1.0, "val_avg_loss": 1.5})
+    output = tmp_path / "plots"
+
+    written = exporter.export_plots(tmp_path / "logs", output, "svg")
+    first_export = written[0].read_text(encoding="utf-8")
+    exporter.export_plots(tmp_path / "logs", output, "svg")
+
+    assert [path.name for path in written] == ["loss.svg"]
+    assert first_export.startswith("<?xml")
+    assert "<svg" in first_export
+    assert written[0].read_text(encoding="utf-8") == first_export
+
+
 def test_no_event_files_is_clear_error(tmp_path):
     import pytest
 

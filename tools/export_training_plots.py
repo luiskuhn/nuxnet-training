@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export scalar metrics from the newest TensorBoard run as PNG plots."""
+"""Export scalar metrics from the newest TensorBoard run as PNG or SVG plots."""
 
 import argparse
 import os
@@ -17,6 +17,7 @@ from tensorboard.backend.event_processing.event_accumulator import EventAccumula
 PHASES = ("train", "val", "test")
 DISPLAY_NAMES = {"avg_loss": "Loss", "avg_acc": "Accuracy"}
 FILE_NAMES = {"avg_loss": "loss", "avg_acc": "accuracy"}
+PLOT_FORMATS = ("png", "svg")
 
 
 def find_newest_run(logdir: Path) -> Path:
@@ -47,8 +48,10 @@ def _plot_name(metric: str) -> str:
     return FILE_NAMES.get(metric, re.sub(r"[^A-Za-z0-9_.-]+", "_", metric).strip("_"))
 
 
-def export_plots(logdir: Path, output_dir: Path) -> list[Path]:
+def export_plots(logdir: Path, output_dir: Path, plot_format: str = "png") -> list[Path]:
     """Reload the newest run and atomically export every phase-grouped scalar plot."""
+    if plot_format not in PLOT_FORMATS:
+        raise ValueError(f"Plot format must be one of: {', '.join(PLOT_FORMATS)}")
     run_dir = find_newest_run(logdir)
     accumulator = EventAccumulator(str(run_dir), size_guidance={"scalars": 0})
     accumulator.Reload()
@@ -82,11 +85,15 @@ def export_plots(logdir: Path, output_dir: Path) -> list[Path]:
             axis.set_ylim(0, 1)
         fig.tight_layout()
 
-        destination = output_dir / f"{_plot_name(metric)}.png"
-        fd, temporary_name = tempfile.mkstemp(prefix=f".{destination.stem}-", suffix=".png", dir=output_dir)
+        destination = output_dir / f"{_plot_name(metric)}.{plot_format}"
+        fd, temporary_name = tempfile.mkstemp(
+            prefix=f".{destination.stem}-", suffix=f".{plot_format}", dir=output_dir
+        )
         os.close(fd)
         try:
-            fig.savefig(temporary_name, dpi=150)
+            metadata = {"Date": None} if plot_format == "svg" else None
+            with matplotlib.rc_context({"svg.hashsalt": "nuxnet-training"}):
+                fig.savefig(temporary_name, dpi=150, format=plot_format, metadata=metadata)
             os.replace(temporary_name, destination)
         finally:
             Path(temporary_name).unlink(missing_ok=True)
@@ -98,10 +105,13 @@ def export_plots(logdir: Path, output_dir: Path) -> list[Path]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--logdir", type=Path, required=True, help="Directory containing TensorBoard runs")
-    parser.add_argument("--output-dir", type=Path, required=True, help="Directory for exported PNG files")
+    parser.add_argument("--output-dir", type=Path, required=True, help="Directory for exported plot files")
+    parser.add_argument(
+        "--format", choices=PLOT_FORMATS, default="png", dest="plot_format", help="Plot file format (default: png)"
+    )
     args = parser.parse_args()
     try:
-        files = export_plots(args.logdir, args.output_dir)
+        files = export_plots(args.logdir, args.output_dir, args.plot_format)
     except (FileNotFoundError, OSError, ValueError) as error:
         parser.exit(1, f"error: {error}\n")
     print(f"Exported {len(files)} plot(s) from {find_newest_run(args.logdir)} to {args.output_dir}")

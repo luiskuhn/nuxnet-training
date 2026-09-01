@@ -1,223 +1,164 @@
-<!-- markdownlint-disable MD010 MD013 -->
+<!-- markdownlint-disable MD013 -->
 
 # nuxnet-training
 
-Reproducible 3D U-Net training for nucleus-marker segmentation in the NuMorph light-sheet microscopy dataset. The training architecture and exported state dictionary are compatible with `nuxnet-inference`.
+Reproducible 3D U-Net training for nucleus-marker detection in NuMorph light-sheet microscopy data. The exported PyTorch state dictionary is compatible with [`nuxnet-inference`](https://github.com/luiskuhn/nuxnet-inference).
 
-- Free software: MIT
-- Input data: BIA/BioImage.IO metadata with paired OME-TIFF volumes
-- Task: binary nucleus-marker detection
+## What this repository trains
 
-## Dataset overview
+The model is a compact 2.34-million-parameter 3D U-Net with 32-, 64-, and 128-channel encoder levels, skip connections, 3D dropout and a two-channel (background/marker) output. It uses focal loss (fixed $\gamma=2$), Adam, validation-loss checkpointing and reports loss, voxel accuracy, per-class IoU and mean IoU. Because the foreground is sparse, prefer nucleus-class and mean IoU over accuracy when comparing runs.
 
-`NUMORPH_SEM_SEG_DATASET` is a curated training-data package derived from the NuMorph 3D U-Net nucleus-detection data described by Krupa _et al._ in [_NuMorph: Tools for cortical cellular phenotyping in tissue-cleared whole-brain images_](https://doi.org/10.1016/j.celrep.2021.109802). It contains light-sheet fluorescence microscopy patches of TO-PRO-3-labelled nuclei from wild-type mouse (`NCBITaxon:10090`) cerebral cortex (`UBERON:0000956`).
-
-The public archive contains 32 paired image/mask volumes split evenly between two physical-resolution groups:
-
-| Group  | Pairs | Voxel size (X × Y × Z) | Volume shapes (Z × Y × X)                   |
-| ------ | ----: | ---------------------- | ------------------------------------------- |
-| `C075` |    16 | 0.75 × 0.75 × 2.5 µm   | 16 × `64 × 224 × 224`                       |
-| `C121` |    16 | 1.21 × 1.21 × 4.0 µm   | 14 × `64 × 224 × 224`; 2 × `64 × 256 × 256` |
-
-Images are normalized, single-channel `float32` OME-TIFF volumes with values in `[0,1]`. Their paired masks are `uint8` OME-TIFF volumes with binary values `{0,1}`. The foreground occupies roughly 1–5 percent of a volume in the current package.
+The default `NUMORPH_SEM_SEG_DATASET` contains 32 paired OME-TIFF image/mask volumes: 16 at 0.75 × 0.75 × 2.5 µm and 16 at 1.21 × 1.21 × 4.0 µm. Images are normalized, single-channel `float32`; masks are binary `uint8`.
 
 > [!IMPORTANT]
-> The masks represent manually curated **2D middle-Z nucleus markers for detection**. They are not complete 3D nuclear boundaries or nucleus instance segmentations, even though they are stored in 3D OME-TIFF volumes.
+> Masks are manually curated **2D middle-Z nucleus markers for detection**, stored in 3D volumes. They are not complete 3D boundaries or instance segmentations. Confirm the dataset's reuse terms before redistribution because its packaged metadata currently records the license and public resource identifiers as pending.
 
-The archive also includes BIA `images.tsv`/`annotations.tsv` file lists, REMBI/MIFA submission notes, a BioImage.IO dataset RDF and manifest, and a machine-readable dataset summary. Its metadata currently records the license, BioImage Archive accession, and BioImage.IO resource ID as pending; users should therefore confirm reuse terms before redistributing the data.
+## Quick start with Docker
 
-## Architecture
-
-The model is the same compact 2.34-million-parameter 3D U-Net used by `nuxnet-inference`. Its encoder has 32-, 64-, and 128-channel levels, two learned stride-2 downsampling operations, and a 128-channel bottleneck. The decoder uses nearest-neighbour 2x upsampling and concatenates the corresponding encoder features through U-Net skip connections before producing per-voxel logits with a 1x1x1 convolution. Each convolutional block contains two 3x3x3 convolutions with 3D dropout, batch normalization, and ReLU activation. The default output has two channels: background and nucleus marker.
-
-This detection task sits in the scientific context of [Krupa et al.'s NuMorph workflow](https://doi.org/10.1016/j.celrep.2021.109802), an open-source analysis toolkit developed to register, segment, and quantify cellular distributions in cleared whole-mouse-brain microscopy data. NuMorph combines brain registration and cortical analysis with deep-learning-based cell detection so detected cells can be mapped into anatomical space and summarized across regions. This repository trains the nucleus-marker network used by that detection stage; it does **not** reconstruct full nuclear surfaces or instances. The encoder-decoder design follows the localization principle of [U-Net](https://doi.org/10.1007/978-3-319-24574-4_28), extended here to volumetric convolutions and anisotropic 3D image patches.
-
-### Training objective and optimization
-
-The network's logits are converted to class probabilities with softmax and optimized with the [focal loss of Lin et al.](https://doi.org/10.1109/TPAMI.2018.2858826). For the target-class probability $p_t$, the implemented objective is $-\alpha_t(1-p_t)^\gamma\log(p_t)$, with fixed $\gamma=2$ and slight label smoothing (`1e-5`). The focusing term reduces the contribution of already easy voxels, while `--class-weights` controls the relative class contribution. The defaults `0.2,1.0` are normalized internally and emphasize the sparse nucleus-marker class over the much more abundant background; supply exactly one comma-separated weight per output class.
-
-Training uses Adam (`--lr 0.0001` by default) and reduces the learning rate by a factor of ten after ten epochs without improvement in epoch-level training loss, down to `1e-6`. Checkpoint selection is separate: Lightning retains the model with the lowest validation loss. Runs report loss, voxel accuracy, per-class intersection-over-union (IoU), and mean IoU for training, validation, and test phases. Accuracy can be dominated by background in this sparse task, so nucleus-class IoU and mean IoU should be considered alongside it.
-
-## Run a training job
-
-### Docker (recommended)
-
-Docker provides the pinned Python and CUDA dependencies, so no local Python environment is
-required. You need Docker Engine and an extracted dataset directory or dataset ZIP. The image is
-CUDA-enabled, but it can run in CPU mode on a host without a GPU.
-
-From the repository root, create host directories for persistent output and build the image:
+Docker is recommended because it provides pinned Python and CUDA dependencies. Build the image, create persistent output directories, and train on an extracted dataset:
 
 ```bash
 mkdir -p "$PWD/mlruns" "$PWD/output"
 docker build -t nuxnet-training .
-```
 
-Mount the dataset read-only at `/data` and run a CPU training job:
-
-```bash
 docker run --rm \
   -v "$PWD/dataset:/data:ro" \
   -v "$PWD/mlruns:/mlruns" \
-  -v "$PWD/output:/output" \
   nuxnet-training \
   --dataset-path /data --max_epochs 100 --accelerator cpu --devices 1
 ```
 
-`$PWD/dataset` may be an extracted dataset directory. To use a ZIP instead, mount the file and
-point `--dataset-path` to its in-container path:
+`--dataset-path` also accepts a ZIP. To download the public dataset automatically, mount a writable directory and use:
 
 ```bash
 docker run --rm \
-  -v "$PWD/data/NUMORPH_SEM_SEG_DATASET.zip:/data/dataset.zip:ro" \
-  -v "$PWD/mlruns:/mlruns" \
+  -v "$PWD/data:/data" -v "$PWD/mlruns:/mlruns" \
   nuxnet-training \
-  --dataset-path /data/dataset.zip --max_epochs 100 --accelerator cpu --devices 1
+  --download-dataset --dataset-path /data/NUMORPH_SEM_SEG_DATASET.zip \
+  --max_epochs 100 --accelerator cpu --devices 1
 ```
 
-For NVIDIA GPU training, first install the NVIDIA driver and
-[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
-on the host. Then expose the GPU to the container and select Lightning's GPU accelerator:
+For an NVIDIA GPU, install the NVIDIA Container Toolkit and add `--gpus all` to `docker run`, then pass `--accelerator gpu --devices 1`. The best inference-compatible model is written to the mounted `mlruns/numorph_unet3d.pt`; Lightning checkpoints and TensorBoard events are stored below the same directory.
+
+## Hyperparameters
+
+These options have the greatest effect on training quality, runtime, and memory:
+
+| Hyperparameter | CLI flag | Default | Description |
+| --- | --- | ---: | --- |
+| Epochs | `--max_epochs` | `1000` | Maximum training epochs. |
+| Learning rate | `--lr` | `0.0001` | Adam learning rate. It is reduced 10× after 10 stagnant training-loss epochs, to a minimum of `1e-6`. |
+| Patch size | `--patch-size Z,Y,X` | `32,128,128` | Spatial context per sample. Each dimension must be divisible by four; larger patches require more memory. |
+| Training batch size | `--training-batch-size` | `1` | Patches per optimizer step. Increase only when memory permits. |
+| Patches per volume | `--patches-per-volume` | `8` | Random training patches drawn from each volume per epoch. Higher values provide more sampling at greater runtime. |
+| Foreground sampling | `--foreground-patch-probability` | `0.8` | Probability that a training patch is centered on a marker (`0`–`1`). |
+| Class weights | `--class-weights` | `0.2,1.0` | Comma-separated focal-loss weights for background and marker. Supply one value per output class. |
+| Dropout | `--dropout-rate` | `0.25` | 3D dropout probability in convolution blocks. |
+| Rotation | `--random-rotation-degrees` | `2.0` | Maximum random 3D training rotation; use `0` to disable augmentation. |
+| Folds | `--cross-validation-folds` | `5` | Number of shuffled, resolution-group-stratified folds (at least two). |
+| Held-out fold | `--validation-fold` | `0` | One-based validation/test fold. `0` selects reproducibly from the general seed. |
+| Validation interval | `--test-epochs` | `10` | Run validation every N epochs. Final testing always uses the best checkpoint. |
+| Input normalization | `--normalize-input` / `--no-normalize-input` | enabled | Per-volume min/max normalization compatible with inference. Disable only for prepared inputs. |
+
+Reproducibility and execution options:
+
+| CLI flag | Default | Description |
+| --- | ---: | --- |
+| `--general-seed`, `--pytorch-seed` | `0`, `0` | Python/NumPy and PyTorch random seeds. |
+| `--accelerator` | `auto` | Lightning accelerator: `auto`, `cpu`, or `gpu`. |
+| `--devices` | `auto` | Device count or `auto`; use with `--strategy` for distributed training. |
+| `--num_workers` | `2` | Data-loader workers. Increase when input loading limits throughput. |
+| `--log-interval` | `100` | Training steps between log writes. |
+| `--n-channels`, `--n-class` | `1`, `2` | Input channels and output classes. Defaults match NuMorph and inference. |
+| `--test-batch-size` | `1` | Validation/test batch size. |
+| `--max-training-volumes`, `--max-validation-volumes` | unset | Limit volumes after splitting for smoke tests only. |
+
+Dataset options are `--dataset-path`, `--download-dataset`, `--dataset-url`, and `--overwrite-dataset`. Run `docker run --rm nuxnet-training --help` (or the Python command below with `--help`) for the authoritative complete CLI.
+
+## Example configurations
+
+### Production GPU run
+
+This retains the recommended patch and sampling defaults while making the fold explicit:
 
 ```bash
 docker run --rm --gpus all \
-  -v "$PWD/dataset:/data:ro" \
-  -v "$PWD/mlruns:/mlruns" \
-  -v "$PWD/output:/output" \
+  -v "$PWD/dataset:/data:ro" -v "$PWD/mlruns:/mlruns" \
   nuxnet-training \
-  --dataset-path /data --max_epochs 100 --accelerator gpu --devices 1
+  --dataset-path /data --accelerator gpu --devices 1 \
+  --max_epochs 1000 --lr 0.0001 \
+  --patch-size 32,128,128 --training-batch-size 1 \
+  --patches-per-volume 8 --foreground-patch-probability 0.8 \
+  --class-weights 0.2,1.0 --validation-fold 1
 ```
 
-The bind mounts have distinct purposes:
+### Fast end-to-end smoke test
 
-| Container path | Purpose | Required |
-| -------------- | ------- | -------- |
-| `/data` | Input dataset directory or ZIP | Yes |
-| `/mlruns` | Lightning logs, MLflow artifacts, and `numorph_unet3d.pt` | Recommended |
-| `/output` | Optional destination for exported metric plots | No |
-
-Without the `/mlruns` bind mount, training results are deleted with an `--rm` container. The
-container runs the training module automatically when its arguments begin with an option. It can
-also run an explicit command, which is useful for inspecting help or opening a shell:
+This verifies download, loading, training, validation, testing and export; its small sample and patches do **not** measure model quality:
 
 ```bash
-docker run --rm nuxnet-training --help
-docker run --rm -it --entrypoint /bin/bash nuxnet-training
+docker run --rm \
+  -v "$PWD/data:/data" -v "$PWD/mlruns:/mlruns" \
+  nuxnet-training \
+  --download-dataset --dataset-path /data/NUMORPH_SEM_SEG_DATASET.zip \
+  --accelerator cpu --devices 1 --max_epochs 2 --test-epochs 1 \
+  --max-training-volumes 2 --max-validation-volumes 1 \
+  --patch-size 8,32,32 --patches-per-volume 1 \
+  --random-rotation-degrees 0 --num_workers 0 --log-interval 1
 ```
 
-All options shown by `--help` can be appended to the Docker command. A completed run writes the
-best inference-compatible weights to `/mlruns/numorph_unet3d.pt`.
+### Tune foreground imbalance
 
-#### Debug with a realistic reduced-data run
-
-The following end-to-end Docker test uses the real public NuMorph dataset while limiting the run
-to five training volumes and three validation volumes. It trains for 100 epochs and calculates
-validation metrics every ten epochs. One patch is sampled from each training volume per epoch;
-the patch retains the intended default size of `32,128,128` (Z,Y,X). Run the commands from the
-repository root:
+Draw every patch around a marker and increase its loss contribution:
 
 ```bash
-mkdir -p "$PWD/data" "$PWD/mlruns" "$PWD/output/plots"
-docker build -t nuxnet-training .
-
-docker run --rm \
-  -v "$PWD/data:/data" \
-  -v "$PWD/mlruns:/mlruns" \
-  -v "$PWD/output:/output" \
-  nuxnet-training \
-  --download-dataset \
-  --dataset-path /data/NUMORPH_SEM_SEG_DATASET.zip \
-  --max_epochs 100 \
-  --test-epochs 10 \
-  --max-training-volumes 5 \
-  --max-validation-volumes 3 \
-  --patches-per-volume 1 \
-  --accelerator cpu \
-  --devices 1 \
-  --num_workers 2 \
-  --log-interval 1
-
-docker run --rm \
-  -v "$PWD/mlruns:/mlruns:ro" \
-  -v "$PWD/output:/output" \
-  nuxnet-training \
-  python /app/tools/export_training_plots.py \
-  --logdir /mlruns \
-  --output-dir /output/plots
+python -m numorph_nuclei_segmentation.numorph_nuclei_segmentation \
+  --dataset-path data/NUMORPH_SEM_SEG_DATASET \
+  --foreground-patch-probability 1.0 --class-weights 0.1,1.0 \
+  --patches-per-volume 12 --lr 0.0001
 ```
 
-The first command downloads and retains the approximately 154 MiB dataset ZIP in `data/`, so
-subsequent runs reuse it. The cross-validation split is performed on the complete real dataset
-before the deterministic limits are applied; the selected three validation volumes are also used
-for the final test metrics. Omit both `--max-*-volumes` options for normal full-data training.
+Change one variable at a time and compare the held-out nucleus IoU using the same explicit `--validation-fold` and seeds.
 
-After both containers finish, the persistent host outputs are:
+## Dataset format and splitting
 
-| Output | Host location |
-| ------ | ------------- |
-| Inference-compatible model checkpoint | `mlruns/numorph_unet3d.pt` |
-| Best Lightning checkpoint | `mlruns/checkpoints/` |
-| Raw TensorBoard event data | `mlruns/lightning_logs/` |
-| Loss, accuracy, and available IoU plots | `output/plots/*.png` |
+`--dataset-path` may be an extracted directory or ZIP containing BioImage Archive-style tables. `images.tsv` requires `image_id` and `filename`; `annotations.tsv` requires `image_id` and `filename` (an `annotation_id` is recommended):
 
-##### Run the reduced-data test on an NVIDIA GPU
+```tsv
+# images.tsv
+image_id	filename
+sample-001	images/sample-001.ome.tiff
+```
 
-Install the NVIDIA driver and NVIDIA Container Toolkit on the Docker host before running this
-variant. Verify that Docker can see the GPU with `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`, then use the same mounted directories and training limits as the CPU test:
+```tsv
+# annotations.tsv
+annotation_id	image_id	filename
+mask-001	sample-001	annotations/sample-001.ome.tiff
+```
+
+Paths are relative to the dataset root and every image must have exactly one mask. Images may be `YX`, `ZYX`, or `CZYX`; masks must contain only integer class values `0` and `1`. Non-singleton scene/time dimensions must be exported as separate records. Common BIA aliases such as `image_uuid`, `source_image_id`, `file_name`, and `file_path` are also accepted.
+
+All records participate in a shuffled, group-stratified split. The held-out fold supplies both validation data during fitting and final test metrics; a run fits **one model**, not one model per fold. The resolved fold is printed and logged to MLflow as `selected_validation_fold`.
+
+Training uses random crops, foreground-aware sampling and rotation; validation/test use centered crops. Smaller volumes are zero padded. Input images use trilinear interpolation and masks use nearest-neighbour interpolation.
+
+## Other ways to run
+
+### Conda
 
 ```bash
-mkdir -p "$PWD/data" "$PWD/mlruns" "$PWD/output/plots"
-docker build -t nuxnet-training .
-
-docker run --rm --gpus all \
-  -v "$PWD/data:/data" \
-  -v "$PWD/mlruns:/mlruns" \
-  -v "$PWD/output:/output" \
-  nuxnet-training \
-  --download-dataset \
-  --dataset-path /data/NUMORPH_SEM_SEG_DATASET.zip \
-  --max_epochs 100 \
-  --test-epochs 10 \
-  --max-training-volumes 5 \
-  --max-validation-volumes 3 \
-  --patches-per-volume 1 \
-  --accelerator gpu \
-  --devices 1 \
-  --num_workers 2 \
-  --log-interval 1
-
-docker run --rm \
-  -v "$PWD/mlruns:/mlruns:ro" \
-  -v "$PWD/output:/output" \
-  nuxnet-training \
-  python /app/tools/export_training_plots.py \
-  --logdir /mlruns \
-  --output-dir /output/plots
+conda env create -f environment.yml
+conda activate nuxnet-training
+python -m numorph_nuclei_segmentation.numorph_nuclei_segmentation \
+  --dataset-path data/NUMORPH_SEM_SEG_DATASET \
+  --max_epochs 100 --accelerator cpu --devices 1
 ```
 
-`--gpus all` exposes the host GPUs to Docker, while `--accelerator gpu --devices 1` tells Lightning
-to train on one of them. The plot-export container does not perform model computation and therefore
-does not need GPU access. To select a particular GPU on a multi-GPU host, replace `--gpus all` with,
-for example, `--gpus '"device=1"'`; Lightning still receives that single exposed device as device 0.
-The volume limits are intended for debugging and must each be at least one when supplied.
+Local runs write output below `lightning_logs/`.
 
-### Publish a test container
+### MLflow
 
-Repository maintainers can build a disposable personal image without creating a release. In the
-GitHub repository, open **Actions**, select **Publish personal test container to GHCR**, and choose
-**Run workflow**. The workflow publishes the current revision for `linux/amd64` as
-`ghcr.io/luiskuhn/nuxnet-training:test` and a commit-specific `:test-<sha>` tag using the repository's
-automatic `GITHUB_TOKEN`; no personal access-token secret is required. Make the package public in
-its GHCR package settings if it should be pullable without authentication.
-
-Pushes to `main` publish the regular repository-owned image with `main` and `latest` tags. A
-published semver release additionally publishes full-version and major/minor tags.
-
-### MLflow with Docker
-
-The repository's `MLproject` uses the published container image by default and mounts the local
-`data/`, `mlruns/`, and `output/` directories. Put an extracted dataset (or its ZIP) below `data/`,
-install MLflow, and run:
+The `MLproject` uses the published container and mounts `data/`, `mlruns/`, and `output/`:
 
 ```bash
 python -m pip install mlflow==2.16.2
@@ -226,156 +167,25 @@ mlflow run . --build-image \
   -P accelerator=cpu -P devices=1
 ```
 
-For one GPU, expose it to Docker and change the Lightning accelerator:
+Use `-A runtime=nvidia -P accelerator=gpu` for a GPU. MLflow parameters use `-P name=value`, while direct Python/Docker execution uses the corresponding `--name value` CLI flag.
 
-```bash
-mlflow run . --build-image -A runtime=nvidia \
-  -P dataset-path=/data -P max_epochs=100 \
-  -P accelerator=gpu -P devices=1
-```
+## Export metric plots
 
-Both commands use five folds and select the held-out validation/test fold reproducibly from
-`general-seed=0`. Add `-P validation-fold=3` to hold out fold 3 explicitly, or change the fold count
-with `-P cross-validation-folds=10`. `--build-image` builds from the local `Dockerfile`; omit it to
-use the image configured in `MLproject`. MLflow writes run metadata and artifacts below `mlruns/`.
-
-### Conda (without Docker or MLflow)
-
-To run directly on the host, create the pinned Conda environment and invoke the module:
-
-```bash
-conda env create -f environment.yml
-conda activate nuxnet-training
-python -m numorph_nuclei_segmentation.numorph_nuclei_segmentation \
-  --dataset-path data/NUMORPH_SEM_SEG_DATASET --max_epochs 100 \
-  --accelerator cpu --devices 1 --cross-validation-folds 5
-```
-
-Use `python -m numorph_nuclei_segmentation.numorph_nuclei_segmentation --help` for the complete
-CLI. A completed local run writes the best inference-compatible weights to
-`lightning_logs/numorph_unet3d.pt`.
-
-## OME-TIFF / BioImage Archive dataset format
-
-Training data are read directly from OME-TIFF files and described by two BioImage Archive-style, tab-separated metadata tables in `--dataset-path`. Paths must be relative to that directory and each image must have exactly one segmentation mask. Multi-channel images are returned as `CZYX` tensors; labels are single-channel integer `ZYX` tensors. Every mask is validated when loaded and must contain only the discrete voxel values `0` (background) and `1` (nucleus marker); any fractional, negative, or other class value is rejected. Two-dimensional `YX` data are accepted as one-slice volumes. Non-singleton scene or time dimensions must be exported as separate image records before training.
-
-`images.tsv` requires `image_id` and `filename`. A legacy `split` column may be present, but cross-validation assigns folds across all records:
-
-```tsv
-image_id	filename	split
-sample-001	images/sample-001.ome.tiff	train
-sample-002	images/sample-002.ome.tiff	test
-```
-
-`annotations.tsv` requires `image_id` and `filename`; `annotation_id` is recommended for submission provenance:
-
-```tsv
-annotation_id	image_id	filename
-mask-001	sample-001	annotations/sample-001.ome.tiff
-mask-002	sample-002	annotations/sample-002.ome.tiff
-```
-
-The loader also understands the BIA export aliases `image_uuid`, `source_image_id`, `source_image_uuid`, `file_name`, and `file_path`.
-
-## Cross-validation
-
-Every training run uses a shuffled, group-stratified cross-validation split. The default is five folds (`--cross-validation-folds 5`). Records within each `resolution_group`/`subset` are shuffled using `--general-seed` and distributed across folds, keeping acquisition groups represented as evenly as the data permit. One fold supplies both validation metrics during fitting and final test metrics; the remaining folds supply training data. This is fold-based holdout evaluation for a single run, not five consecutive model fits.
-
-By default (`--validation-fold 0`), a fold is selected pseudo-randomly and reproducibly from `--general-seed`. To select one explicitly, pass its one-based number, for example `--validation-fold 3`. The resolved fold is printed as `Cross-validation fold: 3/5` and recorded in MLflow as `selected_validation_fold`, so every run documents which data measured its validation/test metrics. The number of folds must be at least two and cannot exceed the number of image/mask pairs.
-
-The Conda environment, pip requirements, CI, and container use Python 3.12, PyTorch 2.5.1, NumPy
-1.26.4, and tifffile 2024.8.30 to match nuxnet-inference. The container is based on NVIDIA CUDA
-12.4.1 with cuDNN on Ubuntu 22.04, includes a dependency-import health check, and uses Miniforge to
-provide Python 3.12.
-
-### Export TensorBoard metrics as PNG files
-
-`tools/export_training_plots.py` finds the newest TensorBoard run below a log directory and
-exports every available train/validation/test metric group as a single plot. It can be rerun
-while training is active; metrics not logged yet are skipped and existing PNGs are replaced
-atomically. From a Python environment containing the project requirements, run:
+Export loss, accuracy and IoU charts from the newest TensorBoard run as PNG (default) or SVG:
 
 ```bash
 python tools/export_training_plots.py \
-  --logdir /mlruns \
-  --output-dir /mlruns/plots
+  --logdir mlruns --output-dir output/plots --format png
 ```
 
-The image already contains TensorBoard and Matplotlib, and `/app/tools/export_training_plots.py`
-is copied into it during the image build. To start a named training container with persistent
-training logs and plot output, run:
+With Docker, mount both directories and run the same tool at `/app/tools/export_training_plots.py`. It is safe to rerun while training; metrics not yet available are skipped.
 
-```bash
-mkdir -p "$PWD/mlruns" "$PWD/output"
-docker build -t nuxnet-training .
-docker run --name nuxnet-fold1 --rm --gpus all \
-  -v "$PWD/dataset:/data" \
-  -v "$PWD/mlruns:/mlruns" \
-  -v "$PWD/output:/output" \
-  nuxnet-training \
-  --dataset-path /data --max_epochs 100 --accelerator gpu --devices 1
-```
+## Outputs and compatibility
 
-In a second terminal, export from the running `nuxnet-fold1` container without stopping
-training:
+| Output | Docker location |
+| --- | --- |
+| Inference state dictionary | `/mlruns/numorph_unet3d.pt` |
+| Best Lightning checkpoint | `/mlruns/checkpoints/` |
+| TensorBoard events | `/mlruns/lightning_logs/` |
 
-```bash
-docker exec nuxnet-fold1 \
-  python /app/tools/export_training_plots.py \
-  --logdir /mlruns \
-  --output-dir /output/plots
-```
-
-The output path must be mounted if the plots should persist on the host. For example, start
-the container with `-v "$PWD/output:/output"`; the command above then creates the PNGs in
-`$PWD/output/plots` on the Docker host. Alternatively, when the `/mlruns` bind mount is used, choose
-`--output-dir /mlruns/plots`; the files appear in the host directory mounted at `/mlruns`
-(for the example Docker command above, `$PWD/mlruns/plots`). The exporter automatically uses
-the newest run below `/mlruns`, and it is safe to execute the command repeatedly as new events
-are logged.
-
-For a one-off export when no training container is currently running, mount existing logs and
-an output directory into a temporary container:
-
-```bash
-docker run --rm \
-  -v "$PWD/mlruns:/mlruns:ro" \
-  -v "$PWD/output:/output" \
-  nuxnet-training \
-  python /app/tools/export_training_plots.py \
-    --logdir /mlruns --output-dir /output/plots
-```
-
-To copy plots from a remote training machine to a local Mac, run this on the Mac (replace the
-host and path with the bind-mounted host path):
-
-```bash
-mkdir -p ~/Downloads/nuxnet-plots
-scp 'user@training-host:/path/to/nuxnet-training/mlruns/plots/*.png' \
-  ~/Downloads/nuxnet-plots/
-```
-
-## Dataset download and training behavior
-
-The dataset can be fetched directly from the [public Google Drive share](https://drive.google.com/file/d/1nwLPXoWEsBb3wLNwXHY3L23UiO-5IIyn/view?usp=drive_link). The ZIP is approximately 154 MiB and its OME-TIFF data expand to approximately 500 MiB. The download is written atomically to `--dataset-path` and an existing file is reused, making repeated training runs inexpensive:
-
-```bash
-python -m numorph_nuclei_segmentation.numorph_nuclei_segmentation \
-  --download-dataset --dataset-path data/numorph_nuclei_seg_ds.zip
-```
-
-The configured default is the NuMorph Google Drive file. To download a dataset from another public HTTP(S) link, add `--dataset-url URL`. Use `--overwrite-dataset` to replace an existing archive. The link must allow unauthenticated downloads; private Google Drive files are not supported.
-
-`--dataset-path` accepts either the extracted dataset directory or the ZIP archive itself. The loader searches through a BioImage.IO wrapper directory for the single BIA `images.tsv`/`annotations.tsv` pair, so the archive does not need to be rearranged before training. In addition to the canonical column names above, columns named `image`, `source_image`, `file`, `filepath`, `uri`, `annotation`, `mask`, or `label` are supported. Header matching is insensitive to spaces, hyphens, and case. Annotation source references may use the image identifier, the relative image path, or the image basename. If `images.tsv` has no explicit identifier column, the image path is used as its stable identifier.
-
-The network is source-compatible with `nuxnet-inference`'s `UNet3D`: it has the same block structure, channel widths, layer names, and logits output. Training uses normalized `32,128,128` (Z,Y,X) patches, corresponding to 128x128x32-voxel chunks, which makes differently sized OME-TIFF volumes batchable and guarantees the spatial dimensions required by the model's two downsampling stages. Training chunks are sampled randomly and rotated by up to 2 degrees about a random 3D axis. Image intensities are interpolated trilinearly while masks use nearest-neighbour interpolation, ensuring augmented masks remain discrete `int64` tensors containing only `0` and `1`. Validation and test patches use centered crops without augmentation. Volumes smaller than the requested patch are zero padded. Set a dataset-sized patch with `--patch-size Z,Y,X`; all three values must be multiples of four, and control or disable rotation with `--random-rotation-degrees` (use `0` to disable it). Disable the inference-compatible min/max normalization with `--no-normalize-input` only when the data have already been normalized.
-
-After training, `numorph_unet3d.pt` contains the plain `UNet3D.state_dict` expected by the inference CLI (rather than Lightning's wrapper keys), and is also recorded as an MLflow model artifact.
-
-## NuMorph dataset defaults
-
-The defaults are tailored to the `NUMORPH_SEM_SEG_DATASET` package. Its 32 pairs are discovered from `bia/images.tsv` and `bia/annotations.tsv`; `Files` entries are resolved relative to the package root. `Resolution group` and `Pair ID` form unique sample IDs such as `C075:0001`. Cross-validation distributes the 16 C075 and 16 C121 volumes across folds so both physical-resolution groups remain represented.
-
-The image and mask properties, dimensions, and annotation semantics are summarized in [Dataset overview](#dataset-overview). Training defaults to one input channel and two output classes. To account for the sparse nucleus markers, each training volume produces eight patches per epoch, 80 percent of patches are centered on a foreground marker, and focal-loss weights default to `0.2,1.0` for background and nucleus-marker voxels. These can be changed with `--patches-per-volume`, `--foreground-patch-probability`, and `--class-weights`.
-
-The annotations are nucleus-detection marker masks, not complete 3D nucleus instance segmentations. Use the exported checkpoint with the inference tool's `--classes 2` option.
+The state dictionary contains the plain `UNet3D` weights expected by `nuxnet-inference`; use its `--classes 2` option. Dependencies are pinned to Python 3.12, PyTorch 2.5.1, NumPy 1.26.4 and tifffile 2024.8.30. This project is released under the MIT license.
