@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import os
+import random
 import shutil
 import tempfile
 import zipfile
@@ -27,6 +28,43 @@ _IMAGE_ID_COLUMNS = ("image_id", "image_uuid", "id", "name")
 _SOURCE_COLUMNS = ("image_id", "source_image_id", "source_image_uuid", "source_image", "image", "source")
 
 NUMORPH_DATASET_URL = "https://drive.google.com/file/d/1nwLPXoWEsBb3wLNwXHY3L23UiO-5IIyn/view?usp=drive_link"
+
+
+def cross_validation_split(
+    pairs: Iterable[VolumePair], n_folds: int, validation_fold: int | None, seed: int
+) -> tuple[list[VolumePair], list[VolumePair], int]:
+    """Return a seeded, group-stratified training/validation fold split.
+
+    ``validation_fold`` is zero based internally. When it is ``None``, the
+    seed selects a fold reproducibly. Samples in each metadata group are
+    shuffled independently and distributed round-robin across folds.
+    """
+    pairs = list(pairs)
+    if n_folds < 2:
+        raise ValueError("cross-validation-folds must be at least 2")
+    if n_folds > len(pairs):
+        raise ValueError(
+            f"cross-validation-folds ({n_folds}) cannot exceed the number of samples ({len(pairs)})"
+        )
+    if validation_fold is None:
+        validation_fold = random.Random(seed).randrange(n_folds)  # nosec B311
+    if not 0 <= validation_fold < n_folds:
+        raise ValueError(f"validation-fold must be between 1 and {n_folds}")
+
+    assignments: dict[str, int] = {}
+    rng = random.Random(seed)  # nosec B311
+    groups = sorted({pair.group or "all" for pair in pairs})
+    offset = 0
+    for group in groups:
+        members = [pair for pair in pairs if (pair.group or "all") == group]
+        rng.shuffle(members)
+        for index, pair in enumerate(members):
+            assignments[pair.image_id] = (offset + index) % n_folds
+        offset = (offset + len(members)) % n_folds
+
+    validation = [pair for pair in pairs if assignments[pair.image_id] == validation_fold]
+    training = [pair for pair in pairs if assignments[pair.image_id] != validation_fold]
+    return training, validation, validation_fold
 
 
 def _download_url(url: str) -> str:
@@ -55,7 +93,7 @@ def download_dataset(url: str, destination: str | Path, *, overwrite: bool = Fal
     request = Request(_download_url(url), headers={"User-Agent": "nuxnet-training/1.0"})
     temporary = destination.with_name(f".{destination.name}.part")
     try:
-        with urlopen(request) as response, temporary.open("wb") as output:  # nosec B310 - public URL selected by user
+        with urlopen(request) as response, temporary.open("wb") as output:  # nosec B310
             if response.headers.get_content_type() == "text/html":
                 raise RuntimeError("Dataset URL returned HTML instead of a file; check that the link is public")
             shutil.copyfileobj(response, output, length=1024 * 1024)
@@ -187,13 +225,13 @@ def _read_ome(path: Path, *, mask: bool) -> np.ndarray:
             if array.shape[index] != 1:
                 raise ValueError(f"{path} has non-singleton {axis}; export each scene/timepoint as a separate record")
             array = np.take(array, 0, axis=index)
-            axes = axes[:index] + axes[index + 1 :]
+            axes = axes[:index] + axes[index + 1:]
     if mask and "C" in axes:
         index = axes.index("C")
         if array.shape[index] != 1:
             raise ValueError(f"Segmentation mask must have one channel: {path}")
         array = np.take(array, 0, axis=index)
-        axes = axes[:index] + axes[index + 1 :]
+        axes = axes[:index] + axes[index + 1:]
     wanted = "ZYX" if mask else "CZYX"
     if not mask and "C" not in axes:
         array, axes = np.expand_dims(array, 0), "C" + axes
@@ -332,6 +370,7 @@ class NumorphDataModule(pl.LightningDataModule):
         super().__init__()
         self.args = kwargs
         self.train_dataset = self.test_dataset = None
+        self.validation_fold = None
         self._archive = None
 
     def prepare_data(self):
@@ -346,6 +385,8 @@ class NumorphDataModule(pl.LightningDataModule):
             raise FileNotFoundError(f"Dataset path does not exist: {path}. Use --download-dataset to fetch it.")
 
     def setup(self, stage=None):
+        if self.train_dataset is not None:
+            return
         path = Path(self.args["dataset_path"])
         if path.is_file():
             if not zipfile.is_zipfile(path):
@@ -353,20 +394,16 @@ class NumorphDataModule(pl.LightningDataModule):
             self._archive = extract_dataset_archive(path)
             path = Path(self._archive.name)
         pairs = read_bia_pairs(path)
-        train = [pair for pair in pairs if (pair.split or "").lower() == "train"]
-        test = [pair for pair in pairs if (pair.split or "").lower() in {"test", "validation", "val"}]
-        if not train and not test:
-            generator = torch.Generator().manual_seed(self.args["general_seed"])
-            train, test = [], []
-            groups = sorted({pair.group or "all" for pair in pairs})
-            for group in groups:
-                members = [pair for pair in pairs if (pair.group or "all") == group]
-                order = torch.randperm(len(members), generator=generator).tolist()
-                test_size = max(1, round(len(members) * self.args["test_percent"])) if len(members) > 1 else 0
-                test.extend(members[index] for index in order[:test_size])
-                train.extend(members[index] for index in order[test_size:])
-        elif len(train) + len(test) != len(pairs):
-            raise ValueError("Every record must use split train, validation/val, or test")
+        requested_fold = self.args.get("validation_fold")
+        if requested_fold is not None and requested_fold < 0:
+            raise ValueError("validation-fold must be 0 (random) or a positive one-based fold number")
+        requested_fold = requested_fold - 1 if requested_fold and requested_fold > 0 else None
+        train, test, self.validation_fold = cross_validation_split(
+            pairs,
+            self.args.get("cross_validation_folds", 5),
+            requested_fold,
+            self.args["general_seed"],
+        )
         patch = tuple(int(value) for value in self.args["patch_size"].split(","))
         if len(patch) != 3 or any(value <= 0 or value % 4 for value in patch):
             raise ValueError("patch-size must be three positive, comma-separated multiples of 4")

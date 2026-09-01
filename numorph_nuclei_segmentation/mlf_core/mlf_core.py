@@ -45,7 +45,7 @@ class MLFCore:
 
     @staticmethod
     def md5(filename):
-        digest = hashlib.md5()  # nosec B324 - provenance, not security
+        digest = hashlib.md5()  # nosec B324
         with open(filename, "rb") as handle:
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                 digest.update(chunk)

@@ -11,6 +11,7 @@ from numorph_nuclei_segmentation.data_loading.data_loader import (
     VolumeDataset,
     VolumePair,
     _download_url,
+    cross_validation_split,
     download_dataset,
     extract_dataset_archive,
     read_bia_pairs,
@@ -183,6 +184,38 @@ def test_training_augmentation_defaults_to_requested_patch_and_rotation():
 
     assert args.patch_size == "32,128,128"
     assert args.random_rotation_degrees == 2.0
+    assert args.cross_validation_folds == 5
+    assert args.validation_fold == 0
+
+
+def test_cross_validation_uses_seeded_random_fold_and_all_samples():
+    pairs = [
+        VolumePair(f"sample-{index}", Path(f"image-{index}"), Path(f"mask-{index}"), group=f"group-{index % 2}")
+        for index in range(10)
+    ]
+
+    train, validation, fold = cross_validation_split(pairs, n_folds=5, validation_fold=None, seed=7)
+    repeated = cross_validation_split(pairs, n_folds=5, validation_fold=None, seed=7)
+
+    assert fold == repeated[2]
+    assert [pair.image_id for pair in validation] == [pair.image_id for pair in repeated[1]]
+    assert len(train) == 8
+    assert len(validation) == 2
+    assert {pair.image_id for pair in train}.isdisjoint(pair.image_id for pair in validation)
+    assert {pair.image_id for pair in train + validation} == {pair.image_id for pair in pairs}
+
+
+def test_cross_validation_accepts_an_explicit_fold_and_validates_fold_count():
+    pairs = [VolumePair(str(index), Path(str(index)), Path(str(index))) for index in range(5)]
+
+    _, validation, selected = cross_validation_split(pairs, n_folds=5, validation_fold=3, seed=0)
+
+    assert selected == 3
+    assert len(validation) == 1
+    with pytest.raises(ValueError, match="cannot exceed"):
+        cross_validation_split(pairs, n_folds=6, validation_fold=None, seed=0)
+    with pytest.raises(ValueError, match="between 1 and 5"):
+        cross_validation_split(pairs, n_folds=5, validation_fold=5, seed=0)
 
 
 def test_unknown_image_reference_is_rejected(tmp_path: Path):

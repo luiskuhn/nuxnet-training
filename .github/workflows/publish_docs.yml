@@ -8,13 +8,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
         name: Check out source-code repository
 
       - name: Setup Python
-        uses: actions/setup-python@v1
+        uses: actions/setup-python@v5
         with:
-          python-version: 3.8
+          python-version: '3.12'
 
       - name: Install pip
         run: |
@@ -22,7 +22,7 @@ jobs:
 
       - name: Install doc dependencies
         run: |
-            pip install -r docs/requirements.txt
+            python -m pip install -r docs/requirements.txt
 
       - name: Build docs
         run: |
@@ -35,4 +35,3 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./docs/_build/html
-

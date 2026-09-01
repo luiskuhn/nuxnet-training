@@ -50,7 +50,8 @@ class FocalLoss(nn.Module):
         if alpha is None:
             alpha = torch.ones(num_class, 1)
         elif isinstance(alpha, (list, np.ndarray)):
-            assert len(alpha) == num_class
+            if len(alpha) != num_class:
+                raise ValueError(f"Expected {num_class} focal-loss class weights, got {len(alpha)}")
             alpha = torch.FloatTensor(alpha).view(num_class, 1)
             alpha = alpha / alpha.sum()
         elif isinstance(alpha, float):
