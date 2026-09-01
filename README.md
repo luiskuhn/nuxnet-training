@@ -160,6 +160,17 @@ After both containers finish, the persistent host outputs are:
 | Raw TensorBoard event data | `mlruns/lightning_logs/` |
 | Loss, accuracy, and available IoU plots | `output/plots/*.png` |
 
+PNG export remains the default and is suitable for downloading or downstream tools that require
+raster images. Omitting `--format` is equivalent to passing `--format png`, so existing commands
+continue to produce the same `.png` files. SVG is an opt-in alternative for documentation and
+pull requests where text-based vector graphics are preferable:
+
+```bash
+python tools/export_training_plots.py --logdir mlruns --output-dir output/plots
+python tools/export_training_plots.py --logdir mlruns --output-dir output/plots --format png
+python tools/export_training_plots.py --logdir mlruns --output-dir output/plots --format svg
+```
+
 Verify that the reduced run produced readable (rather than merely present) artifacts with the
 container that performed the training:
 
@@ -175,6 +186,74 @@ This check loads the inference state dictionary on CPU, parses the newest Tensor
 requires train, validation, and test losses, and validates the PNG signatures of every exported
 plot. A failure therefore makes the smoke run fail visibly instead of leaving a corrupt or empty
 artifact unnoticed.
+
+#### Recorded 100-epoch reduced-data CPU test
+
+A complete reduced-data test was recorded on 1 September 2026 to exercise dataset download and
+parsing, deterministic fold selection, training, periodic validation, best-checkpoint restoration,
+final testing, TensorBoard logging, inference-weight export, and PNG plot generation. The run used
+the real `NUMORPH_SEM_SEG_DATASET` archive and cross-validation fold 4 of 5.
+
+| Setting | Recorded value |
+| ------- | -------------- |
+| Execution device | CPU (3 cores) |
+| Training / validation volumes | 5 / 3 |
+| Epochs / validation interval | 100 / 10 epochs |
+| Patches per training volume | 1 |
+| Patch size (Z,Y,X) | `8,32,32` |
+| General / PyTorch seed | 0 / 0 |
+| Best checkpoint | Epoch 79, step 400 |
+| Test loss / voxel accuracy | 0.009776 / 0.938192 |
+| Test background / nucleus-marker IoU | 0.936825 / 0.191059 |
+| Test mean IoU | 0.563942 |
+
+The smaller patch size was deliberately used for this CPU-only recorded run; it changes the amount
+of spatial context and means these values are a pipeline test rather than a model-quality benchmark.
+The standard reduced-data command above retains the production default `32,128,128` patch. The
+recorded command, apart from the container wrapper, was:
+
+```bash
+python -m numorph_nuclei_segmentation.numorph_nuclei_segmentation \
+  --download-dataset \
+  --dataset-path /data/NUMORPH_SEM_SEG_DATASET.zip \
+  --max_epochs 100 \
+  --test-epochs 10 \
+  --max-training-volumes 5 \
+  --max-validation-volumes 3 \
+  --patches-per-volume 1 \
+  --patch-size 8,32,32 \
+  --random-rotation-degrees 0 \
+  --accelerator cpu \
+  --devices 1 \
+  --num_workers 0 \
+  --log-interval 1
+```
+
+Artifact verification loaded all 90 tensors in `numorph_unet3d.pt`, parsed both TensorBoard event
+files, found exactly 100 training-loss events, 10 validation-loss events, and one test-loss event,
+and exported each of the five plots below as text-based SVG vector graphics. Recreate these
+version-control-friendly files from the retained TensorBoard data with
+`python tools/export_training_plots.py --logdir mlruns --output-dir docs/images/reduced_training --format svg`.
+
+##### Loss
+
+![Training, validation, and test loss from the recorded reduced-data run](docs/images/reduced_training/loss.svg)
+
+##### Accuracy
+
+![Training, validation, and test accuracy from the recorded reduced-data run](docs/images/reduced_training/accuracy.svg)
+
+##### Background IoU
+
+![Training, validation, and test background IoU from the recorded reduced-data run](docs/images/reduced_training/iou_0.svg)
+
+##### Nucleus-marker IoU
+
+![Training, validation, and test nucleus-marker IoU from the recorded reduced-data run](docs/images/reduced_training/iou_1.svg)
+
+##### Mean IoU
+
+![Training, validation, and test mean IoU from the recorded reduced-data run](docs/images/reduced_training/mean_iou.svg)
 
 ##### Run the reduced-data test on an NVIDIA GPU
 
