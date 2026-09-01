@@ -17,6 +17,7 @@ import numpy as np
 import pytorch_lightning as pl
 import tifffile
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
 _FILE_COLUMNS = ("filename", "file_name", "file_path", "filepath", "path", "uri", "file", "files")
@@ -232,6 +233,38 @@ def _crop_or_pad(
     return image[(slice(None), *spatial)], label[spatial]
 
 
+def _random_rotate(image: np.ndarray, label: np.ndarray, max_degrees: float):
+    """Rotate an image/mask pair about a random 3-D axis.
+
+    The same sampling grid is used for both arrays. Intensities use trilinear
+    interpolation, while class IDs use nearest-neighbour interpolation so that
+    augmentation cannot create new mask classes.
+    """
+    axis = torch.randn(3, dtype=torch.float64)
+    axis /= axis.norm().clamp_min(torch.finfo(axis.dtype).eps)
+    angle = torch.empty((), dtype=torch.float64).uniform_(-max_degrees, max_degrees)
+    angle = torch.deg2rad(angle)
+    x, y, z = axis
+    zero = torch.zeros((), dtype=axis.dtype)
+    cross = torch.stack((torch.stack((zero, -z, y)), torch.stack((z, zero, -x)), torch.stack((-y, x, zero))))
+    rotation = torch.eye(3, dtype=axis.dtype) * torch.cos(angle)
+    rotation += (1 - torch.cos(angle)) * axis[:, None] * axis[None, :]
+    rotation += torch.sin(angle) * cross
+
+    # affine_grid coordinates are X,Y,Z-normalised. Conjugating by the
+    # dimensions makes ``rotation`` a rotation in voxel coordinates even for
+    # the deliberately anisotropic 128x128x32 patch.
+    dimensions = torch.tensor(label.shape[::-1], dtype=axis.dtype)
+    rotation = rotation * dimensions[None, :] / dimensions[:, None]
+    theta = torch.cat((rotation, torch.zeros((3, 1), dtype=axis.dtype)), dim=1).to(torch.float32)[None]
+    image_tensor = torch.from_numpy(np.ascontiguousarray(image))[None]
+    label_tensor = torch.from_numpy(np.ascontiguousarray(label)).to(torch.float32)[None, None]
+    grid = F.affine_grid(theta, image_tensor.shape, align_corners=False)
+    image_tensor = F.grid_sample(image_tensor, grid, mode="bilinear", padding_mode="zeros", align_corners=False)
+    label_tensor = F.grid_sample(label_tensor, grid, mode="nearest", padding_mode="zeros", align_corners=False)
+    return image_tensor[0], label_tensor[0, 0].to(torch.int64)
+
+
 class VolumeDataset(Dataset):
     """Lazily read and preprocess image/mask patches for the inference U-Net."""
 
@@ -244,6 +277,7 @@ class VolumeDataset(Dataset):
         classes=None,
         samples_per_volume=1,
         foreground_probability=0.0,
+        random_rotation_degrees=0.0,
     ):
         self.pairs = list(pairs)
         self.patch_size = tuple(patch_size) if patch_size else None
@@ -252,6 +286,7 @@ class VolumeDataset(Dataset):
         self.classes = classes
         self.samples_per_volume = samples_per_volume
         self.foreground_probability = foreground_probability
+        self.random_rotation_degrees = float(random_rotation_degrees)
 
     def __len__(self):
         return len(self.pairs) * self.samples_per_volume
@@ -264,6 +299,12 @@ class VolumeDataset(Dataset):
             if not np.array_equal(label, label.astype(np.int64)):
                 raise ValueError(f"Mask contains non-integer class labels: {pair.annotation}")
         label = label.astype(np.int64, copy=False)
+        invalid_labels = np.setdiff1d(np.unique(label), (0, 1))
+        if invalid_labels.size:
+            raise ValueError(
+                f"Mask for {pair.image_id} must contain binary voxel labels 0 and 1 only; "
+                f"found {invalid_labels.tolist()}"
+            )
         if image.shape[1:] != label.shape:
             raise ValueError(f"Image and mask shapes differ for {pair.image_id}: {image.shape[1:]} != {label.shape}")
         if image.shape[0] != 1:
@@ -281,6 +322,8 @@ class VolumeDataset(Dataset):
                 self.random_crop,
                 self.foreground_probability,
             )
+        if self.random_rotation_degrees > 0:
+            return _random_rotate(image, label, self.random_rotation_degrees)
         return torch.from_numpy(np.ascontiguousarray(image)), torch.from_numpy(np.ascontiguousarray(label))
 
 
@@ -331,12 +374,16 @@ class NumorphDataModule(pl.LightningDataModule):
             raise ValueError("patches-per-volume must be at least 1")
         if not 0.0 <= self.args["foreground_patch_probability"] <= 1.0:
             raise ValueError("foreground-patch-probability must be between 0 and 1")
+        rotation_degrees = self.args.get("random_rotation_degrees", 2.0)
+        if rotation_degrees < 0:
+            raise ValueError("random-rotation-degrees must be non-negative")
         common = {"patch_size": patch, "normalize": self.args["normalize_input"], "classes": self.args["n_class"]}
         self.train_dataset = VolumeDataset(
             train,
             random_crop=True,
             samples_per_volume=self.args["patches_per_volume"],
             foreground_probability=self.args["foreground_patch_probability"],
+            random_rotation_degrees=rotation_degrees,
             **common,
         )
         self.test_dataset = VolumeDataset(test, random_crop=False, **common)
