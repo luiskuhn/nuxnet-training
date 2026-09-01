@@ -15,7 +15,7 @@ jobs:
     name: Build and publish image
     runs-on: ubuntu-24.04
     env:
-      IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/numorph-nuclei-segmentation
+      IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/nuxnet-training
     steps:
       - name: Check out source-code repository
         uses: actions/checkout@v4

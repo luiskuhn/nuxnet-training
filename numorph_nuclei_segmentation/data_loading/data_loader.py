@@ -404,6 +404,12 @@ class NumorphDataModule(pl.LightningDataModule):
             requested_fold,
             self.args["general_seed"],
         )
+        for option in ("max_training_volumes", "max_validation_volumes"):
+            limit = self.args.get(option)
+            if limit is not None and limit < 1:
+                raise ValueError(f"{option.replace('_', '-')} must be at least 1")
+        train = train[: self.args.get("max_training_volumes")]
+        test = test[: self.args.get("max_validation_volumes")]
         patch = tuple(int(value) for value in self.args["patch_size"].split(","))
         if len(patch) != 3 or any(value <= 0 or value % 4 for value in patch):
             raise ValueError("patch-size must be three positive, comma-separated multiples of 4")
