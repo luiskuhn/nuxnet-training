@@ -39,10 +39,16 @@ def build_parser():
     parser.add_argument("--n-class", type=int, default=2)
     parser.add_argument("--num_workers", type=int, default=2)
     parser.add_argument("--dropout-rate", type=float, default=0.25)
-    parser.add_argument("--patch-size", default="16,64,64", help="Training patch dimensions Z,Y,X; each must be divisible by 4")
+    parser.add_argument("--patch-size", default="32,128,128", help="Training patch dimensions Z,Y,X; each must be divisible by 4")
     parser.add_argument("--normalize-input", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--patches-per-volume", type=int, default=8)
     parser.add_argument("--foreground-patch-probability", type=float, default=0.8)
+    parser.add_argument(
+        "--random-rotation-degrees",
+        type=float,
+        default=2.0,
+        help="Maximum training-patch rotation in degrees about a random 3-D axis",
+    )
     return parser
 
 

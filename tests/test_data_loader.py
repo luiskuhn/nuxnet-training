@@ -15,6 +15,7 @@ from numorph_nuclei_segmentation.data_loading.data_loader import (
     extract_dataset_archive,
     read_bia_pairs,
 )
+from numorph_nuclei_segmentation.numorph_nuclei_segmentation import build_parser
 from numorph_nuclei_segmentation.model.unet_3d_models import UNet3D
 from numorph_nuclei_segmentation.mlf_core.mlf_core import MLFCore
 
@@ -45,6 +46,7 @@ def test_bia_bioimageio_metadata_loads_preprocessed_ome_tiffs(tmp_path: Path):
     assert loaded_image.min() == 0 and loaded_image.max() == 1
     assert loaded_mask.shape == (4, 8, 8)
     assert loaded_mask.dtype == torch.int64
+    assert set(loaded_mask.unique().tolist()) <= {0, 1}
 
 
 def test_zip_archive_is_safely_extracted_and_discovered(tmp_path: Path):
@@ -143,6 +145,44 @@ def test_foreground_sampling_keeps_sparse_nucleus_markers(tmp_path: Path):
 
     assert len(dataset) == 2
     assert int(dataset[0][1].sum()) == 1
+
+
+def test_random_rotation_preserves_shape_dtype_and_mask_classes(tmp_path: Path):
+    image = np.zeros((8, 16, 16), dtype=np.float32)
+    image[:, 4:12, 4:12] = 1
+    mask = image.astype(np.uint8)
+    tifffile.imwrite(tmp_path / "raw.ome.tif", image, ome=True, metadata={"axes": "ZYX"})
+    tifffile.imwrite(tmp_path / "mask.ome.tif", mask, ome=True, metadata={"axes": "ZYX"})
+    pair = VolumePair("rotate", tmp_path / "raw.ome.tif", tmp_path / "mask.ome.tif")
+
+    rotated_image, rotated_mask = VolumeDataset(
+        [pair], patch_size=(8, 16, 16), random_crop=True, random_rotation_degrees=2.0
+    )[0]
+
+    assert rotated_image.shape == (1, 8, 16, 16)
+    assert rotated_image.dtype == torch.float32
+    assert rotated_mask.shape == (8, 16, 16)
+    assert rotated_mask.dtype == torch.int64
+    assert set(rotated_mask.unique().tolist()) <= {0, 1}
+
+
+def test_non_binary_mask_values_are_rejected(tmp_path: Path):
+    image = np.zeros((4, 8, 8), dtype=np.float32)
+    mask = np.zeros_like(image, dtype=np.uint8)
+    mask[1, 2, 3] = 2
+    tifffile.imwrite(tmp_path / "raw.ome.tif", image, ome=True, metadata={"axes": "ZYX"})
+    tifffile.imwrite(tmp_path / "mask.ome.tif", mask, ome=True, metadata={"axes": "ZYX"})
+    pair = VolumePair("non-binary", tmp_path / "raw.ome.tif", tmp_path / "mask.ome.tif")
+
+    with pytest.raises(ValueError, match=r"binary voxel labels 0 and 1 only.*\[2\]"):
+        VolumeDataset([pair])[0]
+
+
+def test_training_augmentation_defaults_to_requested_patch_and_rotation():
+    args = build_parser().parse_args([])
+
+    assert args.patch_size == "32,128,128"
+    assert args.random_rotation_degrees == 2.0
 
 
 def test_unknown_image_reference_is_rejected(tmp_path: Path):
