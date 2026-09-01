@@ -1,6 +1,6 @@
 <!-- markdownlint-disable MD010 MD013 -->
 
-# numorph-nuclei-segmentation
+# nuxnet-training
 
 Reproducible 3D U-Net training for nucleus-marker segmentation in the NuMorph light-sheet microscopy dataset. The training architecture and exported state dictionary are compatible with `nuxnet-inference`.
 
@@ -50,7 +50,7 @@ From the repository root, create host directories for persistent output and buil
 
 ```bash
 mkdir -p "$PWD/mlruns" "$PWD/output"
-docker build -t numorph-nuclei-segmentation .
+docker build -t nuxnet-training .
 ```
 
 Mount the dataset read-only at `/data` and run a CPU training job:
@@ -60,7 +60,7 @@ docker run --rm \
   -v "$PWD/dataset:/data:ro" \
   -v "$PWD/mlruns:/mlruns" \
   -v "$PWD/output:/output" \
-  numorph-nuclei-segmentation \
+  nuxnet-training \
   --dataset-path /data --max_epochs 100 --accelerator cpu --devices 1
 ```
 
@@ -71,7 +71,7 @@ point `--dataset-path` to its in-container path:
 docker run --rm \
   -v "$PWD/data/NUMORPH_SEM_SEG_DATASET.zip:/data/dataset.zip:ro" \
   -v "$PWD/mlruns:/mlruns" \
-  numorph-nuclei-segmentation \
+  nuxnet-training \
   --dataset-path /data/dataset.zip --max_epochs 100 --accelerator cpu --devices 1
 ```
 
@@ -84,7 +84,7 @@ docker run --rm --gpus all \
   -v "$PWD/dataset:/data:ro" \
   -v "$PWD/mlruns:/mlruns" \
   -v "$PWD/output:/output" \
-  numorph-nuclei-segmentation \
+  nuxnet-training \
   --dataset-path /data --max_epochs 100 --accelerator gpu --devices 1
 ```
 
@@ -101,19 +101,112 @@ container runs the training module automatically when its arguments begin with a
 also run an explicit command, which is useful for inspecting help or opening a shell:
 
 ```bash
-docker run --rm numorph-nuclei-segmentation --help
-docker run --rm -it --entrypoint /bin/bash numorph-nuclei-segmentation
+docker run --rm nuxnet-training --help
+docker run --rm -it --entrypoint /bin/bash nuxnet-training
 ```
 
 All options shown by `--help` can be appended to the Docker command. A completed run writes the
 best inference-compatible weights to `/mlruns/numorph_unet3d.pt`.
 
+#### Debug with a realistic reduced-data run
+
+The following end-to-end Docker test uses the real public NuMorph dataset while limiting the run
+to five training volumes and three validation volumes. It trains for 100 epochs and calculates
+validation metrics every ten epochs. One patch is sampled from each training volume per epoch;
+the patch retains the intended default size of `32,128,128` (Z,Y,X). Run the commands from the
+repository root:
+
+```bash
+mkdir -p "$PWD/data" "$PWD/mlruns" "$PWD/output/plots"
+docker build -t nuxnet-training .
+
+docker run --rm \
+  -v "$PWD/data:/data" \
+  -v "$PWD/mlruns:/mlruns" \
+  -v "$PWD/output:/output" \
+  nuxnet-training \
+  --download-dataset \
+  --dataset-path /data/NUMORPH_SEM_SEG_DATASET.zip \
+  --max_epochs 100 \
+  --test-epochs 10 \
+  --max-training-volumes 5 \
+  --max-validation-volumes 3 \
+  --patches-per-volume 1 \
+  --accelerator cpu \
+  --devices 1 \
+  --num_workers 2 \
+  --log-interval 1
+
+docker run --rm \
+  -v "$PWD/mlruns:/mlruns:ro" \
+  -v "$PWD/output:/output" \
+  nuxnet-training \
+  python /app/tools/export_training_plots.py \
+  --logdir /mlruns \
+  --output-dir /output/plots
+```
+
+The first command downloads and retains the approximately 154 MiB dataset ZIP in `data/`, so
+subsequent runs reuse it. The cross-validation split is performed on the complete real dataset
+before the deterministic limits are applied; the selected three validation volumes are also used
+for the final test metrics. Omit both `--max-*-volumes` options for normal full-data training.
+
+After both containers finish, the persistent host outputs are:
+
+| Output | Host location |
+| ------ | ------------- |
+| Inference-compatible model checkpoint | `mlruns/numorph_unet3d.pt` |
+| Best Lightning checkpoint | `mlruns/checkpoints/` |
+| Raw TensorBoard event data | `mlruns/lightning_logs/` |
+| Loss, accuracy, and available IoU plots | `output/plots/*.png` |
+
+##### Run the reduced-data test on an NVIDIA GPU
+
+Install the NVIDIA driver and NVIDIA Container Toolkit on the Docker host before running this
+variant. Verify that Docker can see the GPU with `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`, then use the same mounted directories and training limits as the CPU test:
+
+```bash
+mkdir -p "$PWD/data" "$PWD/mlruns" "$PWD/output/plots"
+docker build -t nuxnet-training .
+
+docker run --rm --gpus all \
+  -v "$PWD/data:/data" \
+  -v "$PWD/mlruns:/mlruns" \
+  -v "$PWD/output:/output" \
+  nuxnet-training \
+  --download-dataset \
+  --dataset-path /data/NUMORPH_SEM_SEG_DATASET.zip \
+  --max_epochs 100 \
+  --test-epochs 10 \
+  --max-training-volumes 5 \
+  --max-validation-volumes 3 \
+  --patches-per-volume 1 \
+  --accelerator gpu \
+  --devices 1 \
+  --num_workers 2 \
+  --log-interval 1
+
+docker run --rm \
+  -v "$PWD/mlruns:/mlruns:ro" \
+  -v "$PWD/output:/output" \
+  nuxnet-training \
+  python /app/tools/export_training_plots.py \
+  --logdir /mlruns \
+  --output-dir /output/plots
+```
+
+`--gpus all` exposes the host GPUs to Docker, while `--accelerator gpu --devices 1` tells Lightning
+to train on one of them. The plot-export container does not perform model computation and therefore
+does not need GPU access. To select a particular GPU on a multi-GPU host, replace `--gpus all` with,
+for example, `--gpus '"device=1"'`; Lightning still receives that single exposed device as device 0.
+The volume limits are intended for debugging and must each be at least one when supplied.
+
 ### Publish a test container
 
 Repository maintainers can build a disposable personal image without creating a release. In the
 GitHub repository, open **Actions**, select **Publish personal test container to GHCR**, and choose
-**Run workflow**. The workflow publishes the current revision for `linux/amd64` as both
-`ghcr.io/luiskuhn/numorph-nuclei-segmentation-test:latest` and `:test` using the repository's
+**Run workflow**. The workflow publishes the current revision for `linux/amd64` as
+`ghcr.io/luiskuhn/nuxnet-training:test` and a commit-specific `:test-<sha>` tag using the repository's
 automatic `GITHUB_TOKEN`; no personal access-token secret is required. Make the package public in
 its GHCR package settings if it should be pullable without authentication.
 
@@ -152,7 +245,7 @@ To run directly on the host, create the pinned Conda environment and invoke the 
 
 ```bash
 conda env create -f environment.yml
-conda activate numorph-nuclei-segmentation
+conda activate nuxnet-training
 python -m numorph_nuclei_segmentation.numorph_nuclei_segmentation \
   --dataset-path data/NUMORPH_SEM_SEG_DATASET --max_epochs 100 \
   --accelerator cpu --devices 1 --cross-validation-folds 5
@@ -214,12 +307,12 @@ training logs and plot output, run:
 
 ```bash
 mkdir -p "$PWD/mlruns" "$PWD/output"
-docker build -t numorph-nuclei-segmentation .
+docker build -t nuxnet-training .
 docker run --name nuxnet-fold1 --rm --gpus all \
   -v "$PWD/dataset:/data" \
   -v "$PWD/mlruns:/mlruns" \
   -v "$PWD/output:/output" \
-  numorph-nuclei-segmentation \
+  nuxnet-training \
   --dataset-path /data --max_epochs 100 --accelerator gpu --devices 1
 ```
 
@@ -248,7 +341,7 @@ an output directory into a temporary container:
 docker run --rm \
   -v "$PWD/mlruns:/mlruns:ro" \
   -v "$PWD/output:/output" \
-  numorph-nuclei-segmentation \
+  nuxnet-training \
   python /app/tools/export_training_plots.py \
     --logdir /mlruns --output-dir /output/plots
 ```
