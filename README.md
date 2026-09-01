@@ -40,7 +40,79 @@ Training uses Adam (`--lr 0.0001` by default) and reduces the learning rate by a
 
 ## Run a training job
 
-The shortest reproducible route is the Docker-backed MLflow project. Put an extracted dataset (or its ZIP) at `data/`, install MLflow, and run:
+### Docker (recommended)
+
+Docker provides the pinned Python and CUDA dependencies, so no local Python environment is
+required. You need Docker Engine and an extracted dataset directory or dataset ZIP. The image is
+CUDA-enabled, but it can run in CPU mode on a host without a GPU.
+
+From the repository root, create host directories for persistent output and build the image:
+
+```bash
+mkdir -p "$PWD/mlruns" "$PWD/output"
+docker build -t numorph-nuclei-segmentation .
+```
+
+Mount the dataset read-only at `/data` and run a CPU training job:
+
+```bash
+docker run --rm \
+  -v "$PWD/dataset:/data:ro" \
+  -v "$PWD/mlruns:/mlruns" \
+  -v "$PWD/output:/output" \
+  numorph-nuclei-segmentation \
+  --dataset-path /data --max_epochs 100 --accelerator cpu --devices 1
+```
+
+`$PWD/dataset` may be an extracted dataset directory. To use a ZIP instead, mount the file and
+point `--dataset-path` to its in-container path:
+
+```bash
+docker run --rm \
+  -v "$PWD/data/NUMORPH_SEM_SEG_DATASET.zip:/data/dataset.zip:ro" \
+  -v "$PWD/mlruns:/mlruns" \
+  numorph-nuclei-segmentation \
+  --dataset-path /data/dataset.zip --max_epochs 100 --accelerator cpu --devices 1
+```
+
+For NVIDIA GPU training, first install the NVIDIA driver and
+[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
+on the host. Then expose the GPU to the container and select Lightning's GPU accelerator:
+
+```bash
+docker run --rm --gpus all \
+  -v "$PWD/dataset:/data:ro" \
+  -v "$PWD/mlruns:/mlruns" \
+  -v "$PWD/output:/output" \
+  numorph-nuclei-segmentation \
+  --dataset-path /data --max_epochs 100 --accelerator gpu --devices 1
+```
+
+The bind mounts have distinct purposes:
+
+| Container path | Purpose | Required |
+| -------------- | ------- | -------- |
+| `/data` | Input dataset directory or ZIP | Yes |
+| `/mlruns` | Lightning logs, MLflow artifacts, and `numorph_unet3d.pt` | Recommended |
+| `/output` | Optional destination for exported metric plots | No |
+
+Without the `/mlruns` bind mount, training results are deleted with an `--rm` container. The
+container runs the training module automatically when its arguments begin with an option. It can
+also run an explicit command, which is useful for inspecting help or opening a shell:
+
+```bash
+docker run --rm numorph-nuclei-segmentation --help
+docker run --rm -it --entrypoint /bin/bash numorph-nuclei-segmentation
+```
+
+All options shown by `--help` can be appended to the Docker command. A completed run writes the
+best inference-compatible weights to `/mlruns/numorph_unet3d.pt`.
+
+### MLflow with Docker
+
+The repository's `MLproject` uses the published container image by default and mounts the local
+`data/`, `mlruns/`, and `output/` directories. Put an extracted dataset (or its ZIP) below `data/`,
+install MLflow, and run:
 
 ```bash
 python -m pip install mlflow==2.16.2
@@ -57,9 +129,14 @@ mlflow run . --build-image -A runtime=nvidia \
   -P accelerator=gpu -P devices=1
 ```
 
-Both commands use five folds and select the held-out validation/test fold reproducibly from `general-seed=0`. Add `-P validation-fold=3` to hold out fold 3 explicitly, or change the fold count with `-P cross-validation-folds=10`. MLflow writes run metadata and artifacts below `mlruns/`.
+Both commands use five folds and select the held-out validation/test fold reproducibly from
+`general-seed=0`. Add `-P validation-fold=3` to hold out fold 3 explicitly, or change the fold count
+with `-P cross-validation-folds=10`. `--build-image` builds from the local `Dockerfile`; omit it to
+use the image configured in `MLproject`. MLflow writes run metadata and artifacts below `mlruns/`.
 
-To run without MLflow, create the pinned Conda environment and invoke the module directly:
+### Conda (without Docker or MLflow)
+
+To run directly on the host, create the pinned Conda environment and invoke the module:
 
 ```bash
 conda env create -f environment.yml
@@ -69,7 +146,9 @@ python -m numorph_nuclei_segmentation.numorph_nuclei_segmentation \
   --accelerator cpu --devices 1 --cross-validation-folds 5
 ```
 
-Use `python -m numorph_nuclei_segmentation.numorph_nuclei_segmentation --help` for the complete CLI. A completed run writes the best inference-compatible weights to `lightning_logs/numorph_unet3d.pt` locally or `/mlruns/numorph_unet3d.pt` in the container.
+Use `python -m numorph_nuclei_segmentation.numorph_nuclei_segmentation --help` for the complete
+CLI. A completed local run writes the best inference-compatible weights to
+`lightning_logs/numorph_unet3d.pt`.
 
 ## OME-TIFF / BioImage Archive dataset format
 
@@ -99,24 +178,10 @@ Every training run uses a shuffled, group-stratified cross-validation split. The
 
 By default (`--validation-fold 0`), a fold is selected pseudo-randomly and reproducibly from `--general-seed`. To select one explicitly, pass its one-based number, for example `--validation-fold 3`. The resolved fold is printed as `Cross-validation fold: 3/5` and recorded in MLflow as `selected_validation_fold`, so every run documents which data measured its validation/test metrics. The number of folds must be at least two and cannot exceed the number of image/mask pairs.
 
-The Conda environment, pip requirements, CI, and container use Python 3.12, PyTorch 2.5.1, NumPy 1.26.4, and tifffile 2024.8.30 to match nuxnet-inference. The container is based on NVIDIA CUDA 12.4.1 with cuDNN on Ubuntu 22.04, includes a dependency-import health check, and uses Miniforge to provide Python 3.12. Its entry-point wrapper accepts training options directly while still allowing MLflow to execute the command declared by `MLproject`. Build and run locally on CPU with:
-
-```bash
-docker build -t numorph-nuclei-segmentation .
-docker run --rm -v "$PWD/dataset:/data" -v "$PWD/mlruns:/mlruns" numorph-nuclei-segmentation \
-  --dataset-path /data --max_epochs 100 --accelerator auto --devices auto
-```
-
-The CUDA image can still run on a machine without a GPU. To train on an NVIDIA GPU, install
-the NVIDIA Container Toolkit on the Docker host, expose the GPU, and select the Lightning GPU
-accelerator:
-
-```bash
-docker run --rm --gpus all \
-  -v "$PWD/dataset:/data" -v "$PWD/mlruns:/mlruns" \
-  numorph-nuclei-segmentation \
-  --dataset-path /data --max_epochs 100 --accelerator gpu --devices 1
-```
+The Conda environment, pip requirements, CI, and container use Python 3.12, PyTorch 2.5.1, NumPy
+1.26.4, and tifffile 2024.8.30 to match nuxnet-inference. The container is based on NVIDIA CUDA
+12.4.1 with cuDNN on Ubuntu 22.04, includes a dependency-import health check, and uses Miniforge to
+provide Python 3.12.
 
 ### Export TensorBoard metrics as PNG files
 
