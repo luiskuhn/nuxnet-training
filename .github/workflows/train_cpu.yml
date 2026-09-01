@@ -24,16 +24,16 @@ jobs:
         run: pytest -q
 
       - name: Build Docker container
-        run: docker build --tag numorph-nuclei-segmentation:test .
+        run: docker build --tag nuxnet-training:test .
 
       - name: Smoke test Docker entry point and dependencies
         run: |
-          docker run --rm numorph-nuclei-segmentation:test python -c \
+          docker run --rm nuxnet-training:test python -c \
             "import matplotlib, mlflow, numpy, pytorch_lightning, tensorboard, tifffile, torch; assert torch.version.cuda == '12.4'"
-          docker run --rm numorph-nuclei-segmentation:test python -c \
+          docker run --rm nuxnet-training:test python -c \
             "import sys; assert sys.version_info[:2] == (3, 12)"
-          docker run --rm numorph-nuclei-segmentation:test --help
-          docker run --rm numorph-nuclei-segmentation:test \
+          docker run --rm nuxnet-training:test --help
+          docker run --rm nuxnet-training:test \
             python /app/tools/export_training_plots.py --help
 
       - name: Export a TensorBoard plot in Docker
@@ -53,7 +53,7 @@ jobs:
           docker run --rm \
             -v "$PWD/container-test/logs:/mlruns" \
             -v "$PWD/container-test/plots:/output/plots" \
-            numorph-nuclei-segmentation:test \
+            nuxnet-training:test \
             python /app/tools/export_training_plots.py \
               --logdir /mlruns --output-dir /output/plots
           test -s container-test/plots/loss.png

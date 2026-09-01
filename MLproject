@@ -4,12 +4,12 @@
 # License: MIT
 
 
-name: numorph-nuclei-segmentation
+name: nuxnet-training
 
 # conda_env: environment.yml
 
 docker_env:
-  image: ghcr.io/luiskuhn/numorph-nuclei-segmentation:latest
+  image: ghcr.io/luiskuhn/nuxnet-training:latest
   volumes: ["${PWD}/data:/data", "${PWD}/mlruns:/mlruns", "${PWD}/output:/output"]
   environment: [["MLF_CORE_DOCKER_RUN", "TRUE"],["CUBLAS_WORKSPACE_CONFIG", ":4096:8"]]
 

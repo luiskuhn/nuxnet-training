@@ -48,6 +48,18 @@ def build_parser():
     parser.add_argument("--patch-size", default="32,128,128", help="Training patch dimensions Z,Y,X; each must be divisible by 4")
     parser.add_argument("--normalize-input", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--patches-per-volume", type=int, default=8)
+    parser.add_argument(
+        "--max-training-volumes",
+        type=int,
+        default=None,
+        help="Use at most this many training volumes after the fold split (intended for smoke tests)",
+    )
+    parser.add_argument(
+        "--max-validation-volumes",
+        type=int,
+        default=None,
+        help="Use at most this many validation/test volumes after the fold split (intended for smoke tests)",
+    )
     parser.add_argument("--foreground-patch-probability", type=float, default=0.8)
     parser.add_argument(
         "--random-rotation-degrees",
