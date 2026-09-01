@@ -1,7 +1,21 @@
-FROM python:3.12-slim-bookworm
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 
-RUN apt-get update && apt-get install -y --no-install-recommends procps git \
+LABEL description="NuMorph training image with CUDA 12.4, cuDNN, and Python 3.12"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates git procps \
     && rm -rf /var/lib/apt/lists/*
+
+# The CUDA Ubuntu base does not provide Python 3.12. Use the repository's
+# architecture-specific Miniforge installer so the container and Conda
+# environment continue to use the same Python version.
+COPY Miniforge3.sh /tmp/Miniforge3.sh
+RUN sh /tmp/Miniforge3.sh -b -p /opt/conda \
+    && rm /tmp/Miniforge3.sh \
+    && /opt/conda/bin/conda install --yes python=3.12 pip=24.2 \
+    && /opt/conda/bin/conda clean --all --yes
+ENV PATH=/opt/conda/bin:$PATH
+
 WORKDIR /app
 COPY requirements.txt /app/
 RUN python -m pip install --no-cache-dir --upgrade pip==24.2 setuptools==75.1.0 wheel==0.44.0 \
@@ -9,7 +23,7 @@ RUN python -m pip install --no-cache-dir --upgrade pip==24.2 setuptools==75.1.0 
 COPY . /app
 RUN chmod 755 /app/docker-entrypoint.sh
 ENV MLF_CORE_DOCKER_RUN=TRUE CUBLAS_WORKSPACE_CONFIG=:4096:8 PYTHONUNBUFFERED=1
-VOLUME ["/data", "/mlruns"]
+VOLUME ["/data", "/mlruns", "/output"]
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD python -c "import mlflow, numpy, pytorch_lightning, tifffile, torch" || exit 1
+    CMD python -c "import matplotlib, mlflow, numpy, pytorch_lightning, tensorboard, tifffile, torch" || exit 1
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

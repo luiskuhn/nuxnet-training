@@ -99,12 +99,90 @@ Every training run uses a shuffled, group-stratified cross-validation split. The
 
 By default (`--validation-fold 0`), a fold is selected pseudo-randomly and reproducibly from `--general-seed`. To select one explicitly, pass its one-based number, for example `--validation-fold 3`. The resolved fold is printed as `Cross-validation fold: 3/5` and recorded in MLflow as `selected_validation_fold`, so every run documents which data measured its validation/test metrics. The number of folds must be at least two and cannot exceed the number of image/mask pairs.
 
-The Conda environment, pip requirements, CI, and container use Python 3.12, PyTorch 2.5.1, NumPy 1.26.4, and tifffile 2024.8.30 to match nuxnet-inference. The container includes a dependency-import health check, and its entry-point wrapper accepts training options directly while still allowing MLflow to execute the command declared by `MLproject`. Build and run locally with:
+The Conda environment, pip requirements, CI, and container use Python 3.12, PyTorch 2.5.1, NumPy 1.26.4, and tifffile 2024.8.30 to match nuxnet-inference. The container is based on NVIDIA CUDA 12.4.1 with cuDNN on Ubuntu 22.04, includes a dependency-import health check, and uses Miniforge to provide Python 3.12. Its entry-point wrapper accepts training options directly while still allowing MLflow to execute the command declared by `MLproject`. Build and run locally on CPU with:
 
 ```bash
 docker build -t numorph-nuclei-segmentation .
 docker run --rm -v "$PWD/dataset:/data" -v "$PWD/mlruns:/mlruns" numorph-nuclei-segmentation \
   --dataset-path /data --max_epochs 100 --accelerator auto --devices auto
+```
+
+The CUDA image can still run on a machine without a GPU. To train on an NVIDIA GPU, install
+the NVIDIA Container Toolkit on the Docker host, expose the GPU, and select the Lightning GPU
+accelerator:
+
+```bash
+docker run --rm --gpus all \
+  -v "$PWD/dataset:/data" -v "$PWD/mlruns:/mlruns" \
+  numorph-nuclei-segmentation \
+  --dataset-path /data --max_epochs 100 --accelerator gpu --devices 1
+```
+
+### Export TensorBoard metrics as PNG files
+
+`tools/export_training_plots.py` finds the newest TensorBoard run below a log directory and
+exports every available train/validation/test metric group as a single plot. It can be rerun
+while training is active; metrics not logged yet are skipped and existing PNGs are replaced
+atomically. From a Python environment containing the project requirements, run:
+
+```bash
+python tools/export_training_plots.py \
+  --logdir /mlruns \
+  --output-dir /mlruns/plots
+```
+
+The image already contains TensorBoard and Matplotlib, and `/app/tools/export_training_plots.py`
+is copied into it during the image build. To start a named training container with persistent
+training logs and plot output, run:
+
+```bash
+mkdir -p "$PWD/mlruns" "$PWD/output"
+docker build -t numorph-nuclei-segmentation .
+docker run --name nuxnet-fold1 --rm --gpus all \
+  -v "$PWD/dataset:/data" \
+  -v "$PWD/mlruns:/mlruns" \
+  -v "$PWD/output:/output" \
+  numorph-nuclei-segmentation \
+  --dataset-path /data --max_epochs 100 --accelerator gpu --devices 1
+```
+
+In a second terminal, export from the running `nuxnet-fold1` container without stopping
+training:
+
+```bash
+docker exec nuxnet-fold1 \
+  python /app/tools/export_training_plots.py \
+  --logdir /mlruns \
+  --output-dir /output/plots
+```
+
+The output path must be mounted if the plots should persist on the host. For example, start
+the container with `-v "$PWD/output:/output"`; the command above then creates the PNGs in
+`$PWD/output/plots` on the Docker host. Alternatively, when the `/mlruns` bind mount is used, choose
+`--output-dir /mlruns/plots`; the files appear in the host directory mounted at `/mlruns`
+(for the example Docker command above, `$PWD/mlruns/plots`). The exporter automatically uses
+the newest run below `/mlruns`, and it is safe to execute the command repeatedly as new events
+are logged.
+
+For a one-off export when no training container is currently running, mount existing logs and
+an output directory into a temporary container:
+
+```bash
+docker run --rm \
+  -v "$PWD/mlruns:/mlruns:ro" \
+  -v "$PWD/output:/output" \
+  numorph-nuclei-segmentation \
+  python /app/tools/export_training_plots.py \
+    --logdir /mlruns --output-dir /output/plots
+```
+
+To copy plots from a remote training machine to a local Mac, run this on the Mac (replace the
+host and path with the bind-mounted host path):
+
+```bash
+mkdir -p ~/Downloads/nuxnet-plots
+scp 'user@training-host:/path/to/nuxnet-training/mlruns/plots/*.png' \
+  ~/Downloads/nuxnet-plots/
 ```
 
 ## Dataset download and training behavior

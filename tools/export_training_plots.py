@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+"""Export scalar metrics from the newest TensorBoard run as PNG plots."""
+
+import argparse
+import os
+import re
+import tempfile
+from pathlib import Path
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+
+
+PHASES = ("train", "val", "test")
+DISPLAY_NAMES = {"avg_loss": "Loss", "avg_acc": "Accuracy"}
+FILE_NAMES = {"avg_loss": "loss", "avg_acc": "accuracy"}
+
+
+def find_newest_run(logdir: Path) -> Path:
+    """Return the directory containing the most recently modified event file."""
+    event_files = [path for path in logdir.rglob("events.out.tfevents.*") if path.is_file()]
+    if not event_files:
+        raise FileNotFoundError(f"No TensorBoard event files found below {logdir}")
+    newest = max(event_files, key=lambda path: path.stat().st_mtime_ns)
+    return newest.parent
+
+
+def metric_groups(tags: list[str]) -> dict[str, dict[str, str]]:
+    """Group scalar tags with train/validation/test prefixes by metric name."""
+    groups: dict[str, dict[str, str]] = {}
+    for tag in tags:
+        # Lightning commonly prefixes a tag with a namespace, such as "metrics/".
+        leaf = tag.rsplit("/", 1)[-1]
+        match = re.fullmatch(r"(train|val|validation|test)_(.+)", leaf)
+        if not match:
+            continue
+        phase, metric = match.groups()
+        phase = "val" if phase == "validation" else phase
+        groups.setdefault(metric, {})[phase] = tag
+    return groups
+
+
+def _plot_name(metric: str) -> str:
+    return FILE_NAMES.get(metric, re.sub(r"[^A-Za-z0-9_.-]+", "_", metric).strip("_"))
+
+
+def export_plots(logdir: Path, output_dir: Path) -> list[Path]:
+    """Reload the newest run and atomically export every phase-grouped scalar plot."""
+    run_dir = find_newest_run(logdir)
+    accumulator = EventAccumulator(str(run_dir), size_guidance={"scalars": 0})
+    accumulator.Reload()
+    groups = metric_groups(accumulator.Tags().get("scalars", []))
+    output_dir.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+
+    for metric, phase_tags in sorted(groups.items()):
+        fig, axis = plt.subplots(figsize=(8, 5))
+        plotted = False
+        for phase in PHASES:
+            tag = phase_tags.get(phase)
+            if not tag:
+                continue
+            events = accumulator.Scalars(tag)
+            if not events:  # A tag may exist before its first complete event is readable.
+                continue
+            axis.plot([event.step for event in events], [event.value for event in events], label=phase)
+            plotted = True
+        if not plotted:
+            plt.close(fig)
+            continue
+
+        title = DISPLAY_NAMES.get(metric, metric.replace("_", " ").title())
+        axis.set_title(title)
+        axis.set_xlabel("Training step")
+        axis.set_ylabel(title)
+        axis.legend(title="Phase")
+        axis.grid(alpha=0.25)
+        if metric == "avg_acc" or "iou" in metric.lower():
+            axis.set_ylim(0, 1)
+        fig.tight_layout()
+
+        destination = output_dir / f"{_plot_name(metric)}.png"
+        fd, temporary_name = tempfile.mkstemp(prefix=f".{destination.stem}-", suffix=".png", dir=output_dir)
+        os.close(fd)
+        try:
+            fig.savefig(temporary_name, dpi=150)
+            os.replace(temporary_name, destination)
+        finally:
+            Path(temporary_name).unlink(missing_ok=True)
+            plt.close(fig)
+        written.append(destination)
+    return written
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--logdir", type=Path, required=True, help="Directory containing TensorBoard runs")
+    parser.add_argument("--output-dir", type=Path, required=True, help="Directory for exported PNG files")
+    args = parser.parse_args()
+    try:
+        files = export_plots(args.logdir, args.output_dir)
+    except (FileNotFoundError, OSError, ValueError) as error:
+        parser.exit(1, f"error: {error}\n")
+    print(f"Exported {len(files)} plot(s) from {find_newest_run(args.logdir)} to {args.output_dir}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

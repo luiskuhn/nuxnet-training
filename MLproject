@@ -10,7 +10,7 @@ name: numorph-nuclei-segmentation
 
 docker_env:
   image: ghcr.io/luiskuhn/numorph-nuclei-segmentation:latest
-  volumes: ["${PWD}/data:/data"]
+  volumes: ["${PWD}/data:/data", "${PWD}/mlruns:/mlruns", "${PWD}/output:/output"]
   environment: [["MLF_CORE_DOCKER_RUN", "TRUE"],["CUBLAS_WORKSPACE_CONFIG", ":4096:8"]]
 
 entry_points:
