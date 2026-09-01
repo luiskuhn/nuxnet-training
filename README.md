@@ -160,6 +160,22 @@ After both containers finish, the persistent host outputs are:
 | Raw TensorBoard event data | `mlruns/lightning_logs/` |
 | Loss, accuracy, and available IoU plots | `output/plots/*.png` |
 
+Verify that the reduced run produced readable (rather than merely present) artifacts with the
+container that performed the training:
+
+```bash
+docker run --rm \
+  -v "$PWD/mlruns:/mlruns:ro" \
+  -v "$PWD/output:/output:ro" \
+  nuxnet-training \
+  python -c 'from pathlib import Path; import torch; from tensorboard.backend.event_processing.event_accumulator import EventAccumulator; checkpoint=Path("/mlruns/numorph_unet3d.pt"); state=torch.load(checkpoint, map_location="cpu", weights_only=True); assert state and all(hasattr(value, "shape") for value in state.values()); events=list(Path("/mlruns/lightning_logs").rglob("events.out.tfevents.*")); assert events; accumulator=EventAccumulator(str(max(events, key=lambda path: path.stat().st_mtime_ns).parent), size_guidance={"scalars": 0}); accumulator.Reload(); assert {"train_avg_loss", "val_avg_loss", "test_avg_loss"} <= set(accumulator.Tags()["scalars"]); plots=list(Path("/output/plots").glob("*.png")); assert plots and all(path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n") for path in plots); print(f"verified {len(state)} tensors, {len(events)} event files, and {len(plots)} plots")'
+```
+
+This check loads the inference state dictionary on CPU, parses the newest TensorBoard run and
+requires train, validation, and test losses, and validates the PNG signatures of every exported
+plot. A failure therefore makes the smoke run fail visibly instead of leaving a corrupt or empty
+artifact unnoticed.
+
 ##### Run the reduced-data test on an NVIDIA GPU
 
 Install the NVIDIA driver and NVIDIA Container Toolkit on the Docker host before running this
