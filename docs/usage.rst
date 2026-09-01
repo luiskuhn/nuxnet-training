@@ -18,7 +18,7 @@ Docker
 ++++++++
 
 If you use Docker you should not need to build the Docker container manually, since it should be available on Github Packages or another registry.
-However, if you want to build it manually for e.g. development purposes, ensure that the names matches the defined name in the ``MLproject``file.
+However, if you want to build it manually for e.g. development purposes, ensure that the name matches the image defined in the ``MLproject`` file.
 This is sufficient to train on the CPU. If you want to train using the GPU you need to have the `NVIDIA Container Toolkit <https://github.com/NVIDIA/nvidia-docker>`_ installed.
 
 Training
@@ -52,7 +52,8 @@ Parameters
 - lr:                         Learning rate of the optimizer                           [0.0001:    float]
 - log-interval:               Number of batches to train for before logging            [3000:       int]
 - class-weights:              Class weights for loss function (separated by commas)    ['0.2, 1.0, 2.5':       string]
-- test-percent:               Can be used to separate train and test sets (unused)     [0.15:       float]
+- cross-validation-folds:     Number of shuffled, group-stratified folds               [5:           int]
+- validation-fold:            One-based validation/test fold; 0 selects it from seed   [0:           int]
 - test-epochs:           	  Number of epochs between validations            		   [10:       int]
 - dataset-path:               Path to dataset            							   ['/data/':       string]
 - dataset-size:               Can be used to reduce dataset size (unused)	           [131:       int]

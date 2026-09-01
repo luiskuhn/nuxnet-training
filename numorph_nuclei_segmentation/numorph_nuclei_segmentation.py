@@ -29,7 +29,13 @@ def build_parser():
     parser.add_argument("--training-batch-size", type=int, default=1)
     parser.add_argument("--test-batch-size", type=int, default=1)
     parser.add_argument("--class-weights", default="0.2,1.0")
-    parser.add_argument("--test-percent", type=float, default=0.15)
+    parser.add_argument("--cross-validation-folds", type=int, default=5, help="Number of cross-validation folds")
+    parser.add_argument(
+        "--validation-fold",
+        type=int,
+        default=0,
+        help="One-based fold used for validation and test metrics; 0 selects a fold from --general-seed",
+    )
     parser.add_argument("--test-epochs", type=int, default=10)
     parser.add_argument("--dataset-path", default="/data")
     parser.add_argument("--download-dataset", action="store_true", help="Download the dataset to --dataset-path if needed")
@@ -62,6 +68,10 @@ def main():
     MLFCore.log_runtime_environment()
     data = NumorphDataModule(**params)
     data.prepare_data()
+    data.setup("fit")
+    selected_fold = data.validation_fold + 1
+    mlflow.log_param("selected_validation_fold", selected_fold)
+    print(f"[bold blue]Cross-validation fold: [bold green]{selected_fold}/{args.cross_validation_folds}")
     MLFCore.log_input_data(args.dataset_path)
     model = NumorphSegmentator(**params)
     output = Path("/mlruns" if "MLF_CORE_DOCKER_RUN" in os.environ else "lightning_logs")
@@ -77,7 +87,7 @@ def main():
     checkpoint_state = torch.load(checkpoint.best_model_path, map_location="cpu", weights_only=True)["state_dict"]
     inference_state = {key.removeprefix("model."): value for key, value in checkpoint_state.items() if key.startswith("model.")}
     inference_checkpoint = output / "numorph_unet3d.pt"
-    torch.save(inference_state, inference_checkpoint)
+    torch.save(inference_state, inference_checkpoint)  # nosec B614
     mlflow.log_artifact(str(inference_checkpoint), artifact_path="model")
     mlflow.end_run()
     print(f"[bold blue]TensorBoard logs: [bold green]{output}")

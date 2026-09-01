@@ -28,13 +28,54 @@ The archive also includes BIA `images.tsv`/`annotations.tsv` file lists, REMBI/M
 
 ## Architecture
 
-The model is the same reduced 3D U-Net used by `nuxnet-inference`. It has two downsampling stages, nearest-neighbor decoder upsampling, skip connections, 3D convolutions, batch normalization, dropout, and a two-channel logits output for background and nucleus markers.
+The model is the same compact 2.34-million-parameter 3D U-Net used by `nuxnet-inference`. Its encoder has 32-, 64-, and 128-channel levels, two learned stride-2 downsampling operations, and a 128-channel bottleneck. The decoder uses nearest-neighbour 2x upsampling and concatenates the corresponding encoder features through U-Net skip connections before producing per-voxel logits with a 1x1x1 convolution. Each convolutional block contains two 3x3x3 convolutions with 3D dropout, batch normalization, and ReLU activation. The default output has two channels: background and nucleus marker.
+
+This detection task sits in the scientific context of [Krupa et al.'s NuMorph workflow](https://doi.org/10.1016/j.celrep.2021.109802), an open-source analysis toolkit developed to register, segment, and quantify cellular distributions in cleared whole-mouse-brain microscopy data. NuMorph combines brain registration and cortical analysis with deep-learning-based cell detection so detected cells can be mapped into anatomical space and summarized across regions. This repository trains the nucleus-marker network used by that detection stage; it does **not** reconstruct full nuclear surfaces or instances. The encoder-decoder design follows the localization principle of [U-Net](https://doi.org/10.1007/978-3-319-24574-4_28), extended here to volumetric convolutions and anisotropic 3D image patches.
+
+### Training objective and optimization
+
+The network's logits are converted to class probabilities with softmax and optimized with the [focal loss of Lin et al.](https://doi.org/10.1109/TPAMI.2018.2858826). For the target-class probability $p_t$, the implemented objective is $-\alpha_t(1-p_t)^\gamma\log(p_t)$, with fixed $\gamma=2$ and slight label smoothing (`1e-5`). The focusing term reduces the contribution of already easy voxels, while `--class-weights` controls the relative class contribution. The defaults `0.2,1.0` are normalized internally and emphasize the sparse nucleus-marker class over the much more abundant background; supply exactly one comma-separated weight per output class.
+
+Training uses Adam (`--lr 0.0001` by default) and reduces the learning rate by a factor of ten after ten epochs without improvement in epoch-level training loss, down to `1e-6`. Checkpoint selection is separate: Lightning retains the model with the lowest validation loss. Runs report loss, voxel accuracy, per-class intersection-over-union (IoU), and mean IoU for training, validation, and test phases. Accuracy can be dominated by background in this sparse task, so nucleus-class IoU and mean IoU should be considered alongside it.
+
+## Run a training job
+
+The shortest reproducible route is the Docker-backed MLflow project. Put an extracted dataset (or its ZIP) at `data/`, install MLflow, and run:
+
+```bash
+python -m pip install mlflow==2.16.2
+mlflow run . --build-image \
+  -P dataset-path=/data -P max_epochs=100 \
+  -P accelerator=cpu -P devices=1
+```
+
+For one GPU, expose it to Docker and change the Lightning accelerator:
+
+```bash
+mlflow run . --build-image -A runtime=nvidia \
+  -P dataset-path=/data -P max_epochs=100 \
+  -P accelerator=gpu -P devices=1
+```
+
+Both commands use five folds and select the held-out validation/test fold reproducibly from `general-seed=0`. Add `-P validation-fold=3` to hold out fold 3 explicitly, or change the fold count with `-P cross-validation-folds=10`. MLflow writes run metadata and artifacts below `mlruns/`.
+
+To run without MLflow, create the pinned Conda environment and invoke the module directly:
+
+```bash
+conda env create -f environment.yml
+conda activate numorph-nuclei-segmentation
+python -m numorph_nuclei_segmentation.numorph_nuclei_segmentation \
+  --dataset-path data/NUMORPH_SEM_SEG_DATASET --max_epochs 100 \
+  --accelerator cpu --devices 1 --cross-validation-folds 5
+```
+
+Use `python -m numorph_nuclei_segmentation.numorph_nuclei_segmentation --help` for the complete CLI. A completed run writes the best inference-compatible weights to `lightning_logs/numorph_unet3d.pt` locally or `/mlruns/numorph_unet3d.pt` in the container.
 
 ## OME-TIFF / BioImage Archive dataset format
 
 Training data are read directly from OME-TIFF files and described by two BioImage Archive-style, tab-separated metadata tables in `--dataset-path`. Paths must be relative to that directory and each image must have exactly one segmentation mask. Multi-channel images are returned as `CZYX` tensors; labels are single-channel integer `ZYX` tensors. Every mask is validated when loaded and must contain only the discrete voxel values `0` (background) and `1` (nucleus marker); any fractional, negative, or other class value is rejected. Two-dimensional `YX` data are accepted as one-slice volumes. Non-singleton scene or time dimensions must be exported as separate image records before training.
 
-`images.tsv` requires `image_id` and `filename`. It may contain a `split` column whose values are `train`, `validation`/`val`, or `test`:
+`images.tsv` requires `image_id` and `filename`. A legacy `split` column may be present, but cross-validation assigns folds across all records:
 
 ```tsv
 image_id	filename	split
@@ -50,9 +91,15 @@ mask-001	sample-001	annotations/sample-001.ome.tiff
 mask-002	sample-002	annotations/sample-002.ome.tiff
 ```
 
-The loader also understands the BIA export aliases `image_uuid`, `source_image_id`, `source_image_uuid`, `file_name`, and `file_path`. If no split column is supplied, a deterministic split is generated using `--test-percent` and `--general-seed`.
+The loader also understands the BIA export aliases `image_uuid`, `source_image_id`, `source_image_uuid`, `file_name`, and `file_path`.
 
-The environment and container use Python 3.12, PyTorch 2.5.1, NumPy 1.26.4, and tifffile 2024.8.30 to match nuxnet-inference. Build and run locally with:
+## Cross-validation
+
+Every training run uses a shuffled, group-stratified cross-validation split. The default is five folds (`--cross-validation-folds 5`). Records within each `resolution_group`/`subset` are shuffled using `--general-seed` and distributed across folds, keeping acquisition groups represented as evenly as the data permit. One fold supplies both validation metrics during fitting and final test metrics; the remaining folds supply training data. This is fold-based holdout evaluation for a single run, not five consecutive model fits.
+
+By default (`--validation-fold 0`), a fold is selected pseudo-randomly and reproducibly from `--general-seed`. To select one explicitly, pass its one-based number, for example `--validation-fold 3`. The resolved fold is printed as `Cross-validation fold: 3/5` and recorded in MLflow as `selected_validation_fold`, so every run documents which data measured its validation/test metrics. The number of folds must be at least two and cannot exceed the number of image/mask pairs.
+
+The Conda environment, pip requirements, CI, and container use Python 3.12, PyTorch 2.5.1, NumPy 1.26.4, and tifffile 2024.8.30 to match nuxnet-inference. The container includes a dependency-import health check, and its entry-point wrapper accepts training options directly while still allowing MLflow to execute the command declared by `MLproject`. Build and run locally with:
 
 ```bash
 docker build -t numorph-nuclei-segmentation .
@@ -79,7 +126,7 @@ After training, `numorph_unet3d.pt` contains the plain `UNet3D.state_dict` expec
 
 ## NuMorph dataset defaults
 
-The defaults are tailored to the `NUMORPH_SEM_SEG_DATASET` package. Its 32 pairs are discovered from `bia/images.tsv` and `bia/annotations.tsv`; `Files` entries are resolved relative to the package root. `Resolution group` and `Pair ID` form unique sample IDs such as `C075:0001`. The seeded train/test split is stratified across the 16 C075 and 16 C121 volumes so both physical-resolution groups remain represented.
+The defaults are tailored to the `NUMORPH_SEM_SEG_DATASET` package. Its 32 pairs are discovered from `bia/images.tsv` and `bia/annotations.tsv`; `Files` entries are resolved relative to the package root. `Resolution group` and `Pair ID` form unique sample IDs such as `C075:0001`. Cross-validation distributes the 16 C075 and 16 C121 volumes across folds so both physical-resolution groups remain represented.
 
 The image and mask properties, dimensions, and annotation semantics are summarized in [Dataset overview](#dataset-overview). Training defaults to one input channel and two output classes. To account for the sparse nucleus markers, each training volume produces eight patches per epoch, 80 percent of patches are centered on a foreground marker, and focal-loss weights default to `0.2,1.0` for background and nucleus-marker voxels. These can be changed with `--patches-per-volume`, `--foreground-patch-probability`, and `--class-weights`.
 

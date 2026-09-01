@@ -27,7 +27,8 @@ entry_points:
       training-batch-size: {type: int, default: 1}
       test-batch-size: {type: int, default: 1}
       class-weights: {type: string, default: '0.2, 1.0'}
-      test-percent: {type: float, default: 0.15}
+      cross-validation-folds: {type: int, default: 5}
+      validation-fold: {type: int, default: 0}
       test-epochs: {type: int, default: 10}
       dataset-path: {type: string, default: '/data/'}
       n-channels: {type: int, default: 1}
@@ -51,7 +52,8 @@ entry_points:
             --training-batch-size {training-batch-size} \
             --test-batch-size {test-batch-size} \
             --class-weights {class-weights} \
-            --test-percent {test-percent} \
+            --cross-validation-folds {cross-validation-folds} \
+            --validation-fold {validation-fold} \
             --test-epochs {test-epochs} \
             --dataset-path {dataset-path} \
             --n-channels {n-channels} \

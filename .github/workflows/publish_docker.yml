@@ -1,28 +1,39 @@
-name: Publish Container to Docker Packages
-
-# Documentation on the primary Action used here: https://github.com/marketplace/actions/publish-docker
+name: Publish Container to GitHub Container Registry
 
 on:
   release:
-      types: [published]
+    types: [published]
   push:
-      branches:
-        - development
+    branches: [development]
+
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   publish_release:
     runs-on: ubuntu-latest
     steps:
-    - name: Reclaim space
-      run: |
-            sudo rm -rf /usr/share/dotnet
-            sudo rm -rf /opt/ghc
-    - uses: actions/checkout@master
-    - name: Publish to Registry
-      uses: elgohr/Publish-Docker-Github-Action@master
-      with:
-        name: mlf-core/numorph_nuclei_segmentation
-        username: mlf-core
-        password: '${{ secrets.MLF_CORE_SYNC_TOKEN}}'
-        registry: ghcr.io
-        tags: "latest,1.0.0"
+      - name: Check out source-code repository
+        uses: actions/checkout@v4
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish container
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/numorph-nuclei-segmentation:latest
+            ghcr.io/${{ github.repository_owner }}/numorph-nuclei-segmentation:1.0.0
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

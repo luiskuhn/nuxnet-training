@@ -1,38 +1,33 @@
-name: Train numorph-nuclei-segmentation using CPU
+name: Test Python and container environments
 
 on: [push, pull_request]
 
 jobs:
-  run:
+  test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python: [3.7, 3.8]
-
     steps:
-      - name: Reclaim space
-        run: |
-              sudo rm -rf /usr/share/dotnet
-              sudo rm -rf /opt/ghc
-
       - name: Check out source-code repository
-        uses: actions/checkout@v2
-
-      - name: Build Docker container
-        uses: docker/build-push-action@v1
-        with:
-          dockerfile: Dockerfile
-          repository: ghcr.io/mlf-core/numorph_nuclei_segmentation
-          tags: 1.0.0  # <<MLF-CORE_FORCE_BUMP>>
-          push: false
+        uses: actions/checkout@v4
 
       - name: Setup Python
-        uses: actions/setup-python@v1
+        uses: actions/setup-python@v5
         with:
-          python-version:  ${{ matrix.python }}
+          python-version: '3.12'
+          cache: pip
 
-      - name: Install mlflow
-        run: pip install mlflow
+      - name: Install runtime and test dependencies
+        run: |
+          python -m pip install -r requirements.txt pytest==8.3.3
+          python -m pip check
 
-      - name: Train on the CPU
-        run: mlflow run . -P max_epochs=2 -P dataset-path=/data/ -P gpus=0 -P accelerator=None
+      - name: Run tests
+        run: pytest -q
+
+      - name: Build Docker container
+        run: docker build --tag numorph-nuclei-segmentation:test .
+
+      - name: Smoke test Docker entry point and dependencies
+        run: |
+          docker run --rm numorph-nuclei-segmentation:test python -c \
+            "import mlflow, numpy, pytorch_lightning, tifffile, torch"
+          docker run --rm numorph-nuclei-segmentation:test --help
