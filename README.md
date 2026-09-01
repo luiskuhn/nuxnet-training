@@ -108,6 +108,18 @@ docker run --rm -it --entrypoint /bin/bash numorph-nuclei-segmentation
 All options shown by `--help` can be appended to the Docker command. A completed run writes the
 best inference-compatible weights to `/mlruns/numorph_unet3d.pt`.
 
+### Publish a test container
+
+Repository maintainers can build a disposable personal image without creating a release. In the
+GitHub repository, open **Actions**, select **Publish personal test container to GHCR**, and choose
+**Run workflow**. The workflow publishes the current revision for `linux/amd64` as both
+`ghcr.io/luiskuhn/numorph-nuclei-segmentation-test:latest` and `:test` using the repository's
+automatic `GITHUB_TOKEN`; no personal access-token secret is required. Make the package public in
+its GHCR package settings if it should be pullable without authentication.
+
+Pushes to `main` publish the regular repository-owned image with `main` and `latest` tags. A
+published semver release additionally publishes full-version and major/minor tags.
+
 ### MLflow with Docker
 
 The repository's `MLproject` uses the published container image by default and mounts the local
