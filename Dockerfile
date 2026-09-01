@@ -3,14 +3,17 @@ FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 LABEL description="NuMorph training image with CUDA 12.4, cuDNN, and Python 3.12"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates git procps \
+        ca-certificates curl git procps \
     && rm -rf /var/lib/apt/lists/*
 
 # The CUDA Ubuntu base does not provide Python 3.12. Use the repository's
-# architecture-specific Miniforge installer so the container and Conda
-# environment continue to use the same Python version.
-COPY Miniforge3.sh /tmp/Miniforge3.sh
-RUN sh /tmp/Miniforge3.sh -b -p /opt/conda \
+# pinned Miniforge installer so clean GitHub Actions checkouts can build the
+# image without relying on a locally downloaded, gitignored installer.
+ARG MINIFORGE_VERSION=24.7.1-2
+RUN curl --fail --location --show-error --silent \
+        "https://github.com/conda-forge/miniforge/releases/download/${MINIFORGE_VERSION}/Miniforge3-${MINIFORGE_VERSION}-Linux-x86_64.sh" \
+        --output /tmp/Miniforge3.sh \
+    && sh /tmp/Miniforge3.sh -b -p /opt/conda \
     && rm /tmp/Miniforge3.sh \
     && /opt/conda/bin/conda install --yes python=3.12 pip=24.2 \
     && /opt/conda/bin/conda clean --all --yes
