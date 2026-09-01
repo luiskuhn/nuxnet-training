@@ -29,5 +29,31 @@ jobs:
       - name: Smoke test Docker entry point and dependencies
         run: |
           docker run --rm numorph-nuclei-segmentation:test python -c \
-            "import mlflow, numpy, pytorch_lightning, tifffile, torch"
+            "import matplotlib, mlflow, numpy, pytorch_lightning, tensorboard, tifffile, torch; assert torch.version.cuda == '12.4'"
+          docker run --rm numorph-nuclei-segmentation:test python -c \
+            "import sys; assert sys.version_info[:2] == (3, 12)"
           docker run --rm numorph-nuclei-segmentation:test --help
+          docker run --rm numorph-nuclei-segmentation:test \
+            python /app/tools/export_training_plots.py --help
+
+      - name: Export a TensorBoard plot in Docker
+        run: |
+          mkdir -p container-test/logs/run container-test/plots
+          python - <<'PY'
+          import time
+          from tensorboard.compat.proto.event_pb2 import Event
+          from tensorboard.compat.proto.summary_pb2 import Summary
+          from tensorboard.summary.writer.event_file_writer import EventFileWriter
+
+          writer = EventFileWriter("container-test/logs/run")
+          summary = Summary(value=[Summary.Value(tag="train_avg_loss", simple_value=1.0)])
+          writer.add_event(Event(wall_time=time.time(), step=0, summary=summary))
+          writer.close()
+          PY
+          docker run --rm \
+            -v "$PWD/container-test/logs:/mlruns" \
+            -v "$PWD/container-test/plots:/output/plots" \
+            numorph-nuclei-segmentation:test \
+            python /app/tools/export_training_plots.py \
+              --logdir /mlruns --output-dir /output/plots
+          test -s container-test/plots/loss.png
