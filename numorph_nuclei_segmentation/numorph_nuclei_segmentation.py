@@ -11,7 +11,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
 from rich import print
 
-from numorph_nuclei_segmentation.data_loading.data_loader import NumorphDataModule
+from numorph_nuclei_segmentation.data_loading.data_loader import NUMORPH_DATASET_URL, NumorphDataModule
 from numorph_nuclei_segmentation.mlf_core.mlf_core import MLFCore
 from numorph_nuclei_segmentation.model.model import NumorphSegmentator
 
@@ -32,6 +32,9 @@ def build_parser():
     parser.add_argument("--test-percent", type=float, default=0.15)
     parser.add_argument("--test-epochs", type=int, default=10)
     parser.add_argument("--dataset-path", default="/data")
+    parser.add_argument("--download-dataset", action="store_true", help="Download the dataset to --dataset-path if needed")
+    parser.add_argument("--overwrite-dataset", action="store_true", help="Replace an existing downloaded dataset")
+    parser.add_argument("--dataset-url", default=NUMORPH_DATASET_URL, help="Public HTTP(S) or Google Drive dataset URL")
     parser.add_argument("--n-channels", type=int, default=1)
     parser.add_argument("--n-class", type=int, default=2)
     parser.add_argument("--num_workers", type=int, default=2)
@@ -51,9 +54,9 @@ def main():
     mlflow.pytorch.autolog()
     mlflow.start_run()
     MLFCore.log_runtime_environment()
-    MLFCore.log_input_data(args.dataset_path)
-
     data = NumorphDataModule(**params)
+    data.prepare_data()
+    MLFCore.log_input_data(args.dataset_path)
     model = NumorphSegmentator(**params)
     output = Path("/mlruns" if "MLF_CORE_DOCKER_RUN" in os.environ else "lightning_logs")
     checkpoint = ModelCheckpoint(dirpath=output / "checkpoints", save_top_k=1, monitor="val_avg_loss", mode="min")

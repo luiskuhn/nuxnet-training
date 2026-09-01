@@ -7,7 +7,14 @@ import pytest
 import tifffile
 import torch
 
-from numorph_nuclei_segmentation.data_loading.data_loader import VolumeDataset, VolumePair, extract_dataset_archive, read_bia_pairs
+from numorph_nuclei_segmentation.data_loading.data_loader import (
+    VolumeDataset,
+    VolumePair,
+    _download_url,
+    download_dataset,
+    extract_dataset_archive,
+    read_bia_pairs,
+)
 from numorph_nuclei_segmentation.model.unet_3d_models import UNet3D
 from numorph_nuclei_segmentation.mlf_core.mlf_core import MLFCore
 
@@ -52,6 +59,26 @@ def test_zip_archive_is_safely_extracted_and_discovered(tmp_path: Path):
         assert len(read_bia_pairs(extracted.name)) == 1
     finally:
         extracted.cleanup()
+
+
+def test_public_dataset_is_downloaded_and_existing_file_is_reused(tmp_path: Path):
+    source = tmp_path / "source.zip"
+    source.write_bytes(b"zip contents")
+    destination = tmp_path / "downloads" / "dataset.zip"
+
+    assert download_dataset(source.as_uri(), destination) == destination
+    assert destination.read_bytes() == b"zip contents"
+    source.write_bytes(b"changed")
+    download_dataset(source.as_uri(), destination)
+    assert destination.read_bytes() == b"zip contents"
+    download_dataset(source.as_uri(), destination, overwrite=True)
+    assert destination.read_bytes() == b"changed"
+
+
+def test_google_drive_share_link_is_converted_to_direct_download():
+    direct = _download_url("https://drive.google.com/file/d/example-id/view?usp=drive_link")
+
+    assert direct == "https://drive.usercontent.google.com/download?id=example-id&export=download&confirm=t"
 
 
 def test_bia_filename_references_and_bioimage_columns_are_supported(tmp_path: Path):
