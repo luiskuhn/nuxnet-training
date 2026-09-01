@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import csv
+import os
+import shutil
 import tempfile
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+from urllib.request import Request, urlopen
 
 import numpy as np
 import pytorch_lightning as pl
@@ -20,6 +24,47 @@ _IMAGE_FILE_COLUMNS = (*_FILE_COLUMNS, "image")
 _ANNOTATION_FILE_COLUMNS = (*_FILE_COLUMNS, "annotation", "mask", "label")
 _IMAGE_ID_COLUMNS = ("image_id", "image_uuid", "id", "name")
 _SOURCE_COLUMNS = ("image_id", "source_image_id", "source_image_uuid", "source_image", "image", "source")
+
+NUMORPH_DATASET_URL = "https://drive.google.com/file/d/1nwLPXoWEsBb3wLNwXHY3L23UiO-5IIyn/view?usp=drive_link"
+
+
+def _download_url(url: str) -> str:
+    """Convert public Google Drive share links to their file-download form."""
+    parsed = urlparse(url)
+    if parsed.hostname not in {"drive.google.com", "www.drive.google.com"}:
+        return url
+    parts = [part for part in parsed.path.split("/") if part]
+    file_id = parts[parts.index("d") + 1] if "d" in parts and parts.index("d") + 1 < len(parts) else None
+    if file_id is None:
+        file_id = parse_qs(parsed.query).get("id", [None])[0]
+    if not file_id:
+        raise ValueError(f"Could not find a Google Drive file ID in URL: {url}")
+    query = urlencode({"id": file_id, "export": "download", "confirm": "t"})
+    return urlunparse(("https", "drive.usercontent.google.com", "/download", "", query, ""))
+
+
+def download_dataset(url: str, destination: str | Path, *, overwrite: bool = False) -> Path:
+    """Download a public dataset URL atomically, including Google Drive links."""
+    destination = Path(destination).expanduser()
+    if destination.exists() and not overwrite:
+        if not destination.is_file():
+            raise IsADirectoryError(f"Dataset download destination is a directory: {destination}")
+        return destination
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    request = Request(_download_url(url), headers={"User-Agent": "nuxnet-training/1.0"})
+    temporary = destination.with_name(f".{destination.name}.part")
+    try:
+        with urlopen(request) as response, temporary.open("wb") as output:  # nosec B310 - public URL selected by user
+            if response.headers.get_content_type() == "text/html":
+                raise RuntimeError("Dataset URL returned HTML instead of a file; check that the link is public")
+            shutil.copyfileobj(response, output, length=1024 * 1024)
+        if temporary.stat().st_size == 0:
+            raise RuntimeError("Dataset download was empty")
+        os.replace(temporary, destination)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+    return destination
 
 
 @dataclass(frozen=True)
@@ -248,8 +293,14 @@ class NumorphDataModule(pl.LightningDataModule):
 
     def prepare_data(self):
         path = Path(self.args["dataset_path"])
+        if self.args.get("download_dataset"):
+            download_dataset(
+                self.args.get("dataset_url") or NUMORPH_DATASET_URL,
+                path,
+                overwrite=self.args.get("overwrite_dataset", False),
+            )
         if not path.exists():
-            raise FileNotFoundError(f"Dataset path does not exist: {path}")
+            raise FileNotFoundError(f"Dataset path does not exist: {path}. Use --download-dataset to fetch it.")
 
     def setup(self, stage=None):
         path = Path(self.args["dataset_path"])
