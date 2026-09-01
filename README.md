@@ -2,6 +2,8 @@
 
 # nuxnet-training
 
+![Graphical abstract of the nuxnet-training workflow](docs/images/graph_abstract_nuxnet_training.png)
+
 Reproducible 3D U-Net training for nucleus-marker detection in NuMorph light-sheet microscopy data. The exported PyTorch state dictionary is compatible with [`nuxnet-inference`](https://github.com/luiskuhn/nuxnet-inference).
 
 ## What this repository trains
