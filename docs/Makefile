@@ -4,7 +4,7 @@
 # You can set these variables from the command line.
 SPHINXOPTS    =
 SPHINXBUILD   = python -msphinx
-SPHINXPROJ    = liver-ct-segmentation
+SPHINXPROJ    = numorph-nuclei-segmentation
 SOURCEDIR     = .
 BUILDDIR      = _build
 

@@ -1,0 +1,10 @@
+.git
+.github
+.pytest_cache
+__pycache__
+*.py[cod]
+data
+docs/_build
+lightning_logs
+mlruns
+tests
