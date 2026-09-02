@@ -34,7 +34,7 @@ entry_points:
       n-channels: {type: int, default: 1}
       n-class: {type: int, default: 2}
       num_workers: {type: int, default: 24}
-      dropout-rate: {type: float, default: 0.25}
+      dropout-rate: {type: float, default: 0.10}
       patch-size: {type: string, default: '16,64,64'}
       normalize-input: {type: string, default: '--normalize-input'}
       patches-per-volume: {type: int, default: 8}

@@ -60,4 +60,4 @@ Parameters
 - n-channels:                 Number of input channels for U-Net            		   [1:       int]
 - n-class:               	  Number of classes for U-Net            				   [3:       int]
 - num_workers:                Number of workers for data loading					   [24:       int]
-- dropout-rate:               Dropout rate for U-Net            					   [0.25:       float]
+- dropout-rate:               Dropout rate for U-Net            					   [0.10:       float]
