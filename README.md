@@ -8,7 +8,9 @@ Reproducible 3D U-Net training for nucleus-marker detection in NuMorph light-she
 
 ## What this repository trains
 
-The model is a compact 2.34-million-parameter 3D U-Net with 32-, 64-, and 128-channel encoder levels, skip connections, 3D dropout and a two-channel (background/marker) output. It uses focal loss (fixed $\gamma=2$), Adam, validation-loss checkpointing and reports loss, voxel accuracy, per-class IoU and mean IoU. Because the foreground is sparse, prefer nucleus-class and mean IoU over accuracy when comparing runs.
+The model is a compact residual 3D U-Net with 32-, 64-, and 128-channel feature levels. Two stride-2 convolutions form the encoder, and two nearest-neighbor upsampling stages restore the original resolution while reusing encoder features through skip connections. Every two-convolution block has a residual shortcut (a normalized 1×1×1 projection when channels change), and the final 1×1×1 head emits two-channel background/marker logits. Spatial dropout acts only on learned feature maps, never directly on the raw input.
+
+Training uses focal loss (fixed $\gamma=2$), Adam, validation-loss checkpointing and reports loss, voxel accuracy, per-class IoU and mean IoU. Because the foreground is sparse, prefer nucleus-class and mean IoU over accuracy when comparing runs. The architecture remains below 2.5 million parameters and retains the compact model's memory profile.
 
 The default `NUMORPH_SEM_SEG_DATASET` contains 32 paired OME-TIFF image/mask volumes: 16 at 0.75 × 0.75 × 2.5 µm and 16 at 1.21 × 1.21 × 4.0 µm. Images are normalized, single-channel `float32`; masks are binary `uint8`.
 
@@ -55,7 +57,7 @@ These options have the greatest effect on training quality, runtime, and memory:
 | Patches per volume | `--patches-per-volume` | `8` | Random training patches drawn from each volume per epoch. Higher values provide more sampling at greater runtime. |
 | Foreground sampling | `--foreground-patch-probability` | `0.8` | Probability that a training patch is centered on a marker (`0`–`1`). |
 | Class weights | `--class-weights` | `0.2,1.0` | Comma-separated focal-loss weights for background and marker. Supply one value per output class. |
-| Dropout | `--dropout-rate` | `0.25` | 3D dropout probability in convolution blocks. |
+| Dropout | `--dropout-rate` | `0.10` | Probability for all 3D dropout layers: two per residual convolution block and one after each down/up transition. |
 | Rotation | `--random-rotation-degrees` | `2.0` | Maximum random 3D training rotation; use `0` to disable augmentation. |
 | Folds | `--cross-validation-folds` | `5` | Number of shuffled, resolution-group-stratified folds (at least two). |
 | Held-out fold | `--validation-fold` | `0` | One-based validation/test fold. `0` selects reproducibly from the general seed. |
@@ -76,6 +78,23 @@ Reproducibility and execution options:
 | `--max-training-volumes`, `--max-validation-volumes` | unset | Limit volumes after splitting for smoke tests only. |
 
 Dataset options are `--dataset-path`, `--download-dataset`, `--dataset-url`, and `--overwrite-dataset`. Run `docker run --rm nuxnet-training --help` (or the Python command below with `--help`) for the authoritative complete CLI.
+
+### Monte Carlo dropout inference
+
+The core `UNet3D` returns logits. For repeated stochastic inference passes, call
+`enable_mc_dropout(model)` after loading weights. The helper first puts the whole
+model in evaluation mode, then enables only `Dropout3d`; `BatchNorm3d` remains in
+evaluation mode so its running statistics are not updated:
+
+```python
+from numorph_nuclei_segmentation.model import enable_mc_dropout
+
+enable_mc_dropout(model)
+samples = [model(volume).softmax(dim=1) for _ in range(20)]
+```
+
+Aggregate those samples in downstream inference code as appropriate. The helper
+intentionally does not prescribe an uncertainty metric or aggregation strategy.
 
 ## Example configurations
 
