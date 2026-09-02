@@ -44,7 +44,7 @@ def build_parser():
     parser.add_argument("--n-channels", type=int, default=1)
     parser.add_argument("--n-class", type=int, default=2)
     parser.add_argument("--num_workers", type=int, default=2)
-    parser.add_argument("--dropout-rate", type=float, default=0.25)
+    parser.add_argument("--dropout-rate", type=float, default=0.10)
     parser.add_argument("--patch-size", default="32,128,128", help="Training patch dimensions Z,Y,X; each must be divisible by 4")
     parser.add_argument("--normalize-input", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--patches-per-volume", type=int, default=8)

@@ -186,6 +186,7 @@ def test_training_augmentation_defaults_to_requested_patch_and_rotation():
     assert args.random_rotation_degrees == 2.0
     assert args.cross_validation_folds == 5
     assert args.validation_fold == 0
+    assert args.dropout_rate == 0.10
 
 
 def test_cross_validation_uses_seeded_random_fold_and_all_samples():
