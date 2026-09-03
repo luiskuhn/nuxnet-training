@@ -24,6 +24,11 @@ entry_points:
       pytorch-seed: {type: int, default: 0}
       log-interval: {type: int, default: 3000}
       lr: {type: float, default: 0.0001}
+      lr-scheduler-factor: {type: float, default: 0.5}
+      lr-scheduler-patience: {type: int, default: 5}
+      lr-scheduler-threshold: {type: float, default: 0.00001}
+      lr-scheduler-cooldown: {type: int, default: 2}
+      min-lr: {type: float, default: 0.000001}
       training-batch-size: {type: int, default: 1}
       test-batch-size: {type: int, default: 1}
       class-weights: {type: string, default: '0.2, 1.0'}
@@ -49,6 +54,11 @@ entry_points:
             --pytorch-seed {pytorch-seed} \
             --log-interval {log-interval} \
             --lr {lr} \
+            --lr-scheduler-factor {lr-scheduler-factor} \
+            --lr-scheduler-patience {lr-scheduler-patience} \
+            --lr-scheduler-threshold {lr-scheduler-threshold} \
+            --lr-scheduler-cooldown {lr-scheduler-cooldown} \
+            --min-lr {min-lr} \
             --training-batch-size {training-batch-size} \
             --test-batch-size {test-batch-size} \
             --class-weights {class-weights} \

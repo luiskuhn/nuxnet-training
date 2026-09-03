@@ -53,5 +53,15 @@ class NumorphSegmentator(pl.LightningModule):
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.args["lr"])
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.1, patience=10, min_lr=1e-6)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=self.args["lr_scheduler_factor"],
+            patience=self.args["lr_scheduler_patience"],
+            threshold=self.args["lr_scheduler_threshold"],
+            threshold_mode="abs",
+            cooldown=self.args["lr_scheduler_cooldown"],
+            min_lr=self.args["min_lr"],
+            eps=1e-8,
+        )
         return {"optimizer": optimizer, "lr_scheduler": {"scheduler": scheduler, "monitor": "train_avg_loss"}}
