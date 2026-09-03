@@ -32,6 +32,7 @@ def test_exports_grouped_plots_from_newest_run(tmp_path):
             "val_avg_loss": 1.5,
             "train_avg_acc": 0.75,
             "test_iou_1": 0.5,
+            "lr-Adam": 0.0001,
             "unrelated_scalar": 12,
         },
     )
@@ -49,7 +50,7 @@ def test_exports_grouped_plots_from_newest_run(tmp_path):
     output = tmp_path / "nested" / "plots"
     written = exporter.export_plots(tmp_path / "logs", output)
 
-    assert {path.name for path in written} == {"loss.png", "accuracy.png", "iou_1.png"}
+    assert {path.name for path in written} == {"loss.png", "accuracy.png", "iou_1.png", "learning_rate.png"}
     assert all(path.read_bytes().startswith(b"\x89PNG") for path in written)
     exporter.export_plots(tmp_path / "logs", output)  # Existing files are safely replaced.
 
@@ -67,6 +68,16 @@ def test_exports_deterministic_svg_plots(tmp_path):
     assert first_export.startswith("<?xml")
     assert "<svg" in first_export
     assert written[0].read_text(encoding="utf-8") == first_export
+
+
+def test_groups_namespaced_learning_rates_and_parameter_groups():
+    groups = exporter.metric_groups(["metrics/lr-Adam", "lr-Adam/pg1", "lr-Adam/pg2"])
+
+    assert groups["learning_rate"] == {
+        "lr-Adam": "metrics/lr-Adam",
+        "lr-Adam/pg1": "lr-Adam/pg1",
+        "lr-Adam/pg2": "lr-Adam/pg2",
+    }
 
 
 def test_no_event_files_is_clear_error(tmp_path):
