@@ -7,7 +7,7 @@ from pathlib import Path
 import mlflow
 import pytorch_lightning as pl
 import torch
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
 from rich import print
 
@@ -26,6 +26,27 @@ def build_parser():
     parser.add_argument("--pytorch-seed", type=int, default=0)
     parser.add_argument("--log-interval", type=int, default=100)
     parser.add_argument("--lr", type=float, default=0.0001)
+    parser.add_argument(
+        "--lr-scheduler-factor", type=float, default=0.5, help="Factor applied when training loss plateaus"
+    )
+    parser.add_argument(
+        "--lr-scheduler-patience",
+        type=int,
+        default=5,
+        help="Plateau epochs tolerated before reducing the learning rate",
+    )
+    parser.add_argument(
+        "--lr-scheduler-threshold", type=float, default=1e-5, help="Minimum absolute training-loss improvement"
+    )
+    parser.add_argument(
+        "--lr-scheduler-cooldown",
+        type=int,
+        default=2,
+        help="Epochs to wait after a learning-rate reduction",
+    )
+    parser.add_argument(
+        "--min-lr", type=float, default=1e-6, help="Minimum learning rate used by the plateau scheduler"
+    )
     parser.add_argument("--training-batch-size", type=int, default=1)
     parser.add_argument("--test-batch-size", type=int, default=1)
     parser.add_argument("--class-weights", default="0.2,1.0")
@@ -88,10 +109,11 @@ def main():
     model = NumorphSegmentator(**params)
     output = Path("/mlruns" if "MLF_CORE_DOCKER_RUN" in os.environ else "lightning_logs")
     checkpoint = ModelCheckpoint(dirpath=output / "checkpoints", save_top_k=1, monitor="val_avg_loss", mode="min")
+    lr_monitor = LearningRateMonitor(logging_interval="epoch")
     devices = int(args.devices) if args.devices.isdigit() else args.devices
     trainer = pl.Trainer(
         max_epochs=args.max_epochs, accelerator=args.accelerator, devices=devices, strategy=args.strategy,
-        deterministic=True, benchmark=False, callbacks=[checkpoint], logger=TensorBoardLogger(output),
+        deterministic=True, benchmark=False, callbacks=[checkpoint, lr_monitor], logger=TensorBoardLogger(output),
         log_every_n_steps=args.log_interval, check_val_every_n_epoch=args.test_epochs,
     )
     trainer.fit(model, datamodule=data)

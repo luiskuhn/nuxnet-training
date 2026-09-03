@@ -51,7 +51,12 @@ These options have the greatest effect on training quality, runtime, and memory:
 | Hyperparameter | CLI flag | Default | Description |
 | --- | --- | ---: | --- |
 | Epochs | `--max_epochs` | `1000` | Maximum training epochs. |
-| Learning rate | `--lr` | `0.0001` | Adam learning rate. It is reduced 10× after 10 stagnant training-loss epochs, to a minimum of `1e-6`. |
+| Learning rate | `--lr` | `0.0001` | Initial Adam learning rate. |
+| LR reduction factor | `--lr-scheduler-factor` | `0.5` | Multiply the learning rate by this factor when training loss plateaus. |
+| LR scheduler patience | `--lr-scheduler-patience` | `5` | Number of stagnant training-loss epochs tolerated before reducing the rate. |
+| LR improvement threshold | `--lr-scheduler-threshold` | `1e-5` | Minimum absolute training-loss improvement that resets scheduler patience. |
+| LR scheduler cooldown | `--lr-scheduler-cooldown` | `2` | Epochs to wait after a rate reduction before resuming plateau checks. |
+| Minimum learning rate | `--min-lr` | `1e-6` | Lower bound for learning-rate reductions. |
 | Patch size | `--patch-size Z,Y,X` | `32,128,128` | Spatial context per sample. Each dimension must be divisible by four; larger patches require more memory. |
 | Training batch size | `--training-batch-size` | `1` | Patches per optimizer step. Increase only when memory permits. |
 | Patches per volume | `--patches-per-volume` | `8` | Random training patches drawn from each volume per epoch. Higher values provide more sampling at greater runtime. |
@@ -199,7 +204,7 @@ python tools/export_training_plots.py \
   --logdir mlruns --output-dir output/plots --format png
 ```
 
-With Docker, mount both directories and run the same tool at `/app/tools/export_training_plots.py`. It is safe to rerun while training; metrics not yet available are skipped.
+With Docker, mount both directories and run the same tool at `/app/tools/export_training_plots.py`. It is safe to rerun while training; metrics not yet available are skipped. In addition to loss, accuracy, and IoU, runs using the learning-rate monitor export `learning_rate.png` (or `.svg`), including separate series for multiple optimizer parameter groups.
 
 ## Outputs and compatibility
 

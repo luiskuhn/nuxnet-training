@@ -15,8 +15,8 @@ from tensorboard.backend.event_processing.event_accumulator import EventAccumula
 
 
 PHASES = ("train", "val", "test")
-DISPLAY_NAMES = {"avg_loss": "Loss", "avg_acc": "Accuracy"}
-FILE_NAMES = {"avg_loss": "loss", "avg_acc": "accuracy"}
+DISPLAY_NAMES = {"avg_loss": "Loss", "avg_acc": "Accuracy", "learning_rate": "Learning rate"}
+FILE_NAMES = {"avg_loss": "loss", "avg_acc": "accuracy", "learning_rate": "learning_rate"}
 PLOT_FORMATS = ("png", "svg")
 
 
@@ -30,17 +30,22 @@ def find_newest_run(logdir: Path) -> Path:
 
 
 def metric_groups(tags: list[str]) -> dict[str, dict[str, str]]:
-    """Group scalar tags with train/validation/test prefixes by metric name."""
+    """Group phase metrics and Lightning learning-rate scalar tags."""
     groups: dict[str, dict[str, str]] = {}
     for tag in tags:
         # Lightning commonly prefixes a tag with a namespace, such as "metrics/".
         leaf = tag.rsplit("/", 1)[-1]
         match = re.fullmatch(r"(train|val|validation|test)_(.+)", leaf)
-        if not match:
+        if match:
+            phase, metric = match.groups()
+            phase = "val" if phase == "validation" else phase
+            groups.setdefault(metric, {})[phase] = tag
             continue
-        phase, metric = match.groups()
-        phase = "val" if phase == "validation" else phase
-        groups.setdefault(metric, {})[phase] = tag
+        learning_rate = re.search(r"(?:^|/)(lr-[^/]+)(?:/(.+))?$", tag)
+        if learning_rate:
+            optimizer, parameter_group = learning_rate.groups()
+            label = optimizer if parameter_group is None else f"{optimizer}/{parameter_group}"
+            groups.setdefault("learning_rate", {})[label] = tag
     return groups
 
 
@@ -62,14 +67,16 @@ def export_plots(logdir: Path, output_dir: Path, plot_format: str = "png") -> li
     for metric, phase_tags in sorted(groups.items()):
         fig, axis = plt.subplots(figsize=(8, 5))
         plotted = False
-        for phase in PHASES:
-            tag = phase_tags.get(phase)
+        ordered_labels = [phase for phase in PHASES if phase in phase_tags]
+        ordered_labels.extend(sorted(label for label in phase_tags if label not in PHASES))
+        for label in ordered_labels:
+            tag = phase_tags[label]
             if not tag:
                 continue
             events = accumulator.Scalars(tag)
             if not events:  # A tag may exist before its first complete event is readable.
                 continue
-            axis.plot([event.step for event in events], [event.value for event in events], label=phase)
+            axis.plot([event.step for event in events], [event.value for event in events], label=label)
             plotted = True
         if not plotted:
             plt.close(fig)
@@ -79,7 +86,7 @@ def export_plots(logdir: Path, output_dir: Path, plot_format: str = "png") -> li
         axis.set_title(title)
         axis.set_xlabel("Training step")
         axis.set_ylabel(title)
-        axis.legend(title="Phase")
+        axis.legend(title="Optimizer" if metric == "learning_rate" else "Phase")
         axis.grid(alpha=0.25)
         if metric == "avg_acc" or "iou" in metric.lower():
             axis.set_ylim(0, 1)
