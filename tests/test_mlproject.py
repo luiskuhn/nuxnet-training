@@ -12,7 +12,6 @@ def test_mlproject_exposes_and_forwards_anisotropic_training_parameters():
         "target-voxel-spacing": "3.0,1.0,1.0",
         "random-rotation-degrees": 10.0,
         "random-rotation-90-probability": 0.5,
-        "loss-function": "dice-ce",
         "ce-loss-weight": 1.0,
         "dice-loss-weight": 1.0,
         "class-weights": "1.0,1.0",
@@ -23,3 +22,6 @@ def test_mlproject_exposes_and_forwards_anisotropic_training_parameters():
     for name, default in expected_defaults.items():
         assert parameters[name]["default"] == default
         assert f"--{name} {{{name}}}" in main["command"]
+
+    assert "loss-function" not in parameters
+    assert "--loss-function" not in main["command"]

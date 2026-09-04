@@ -32,7 +32,6 @@ entry_points:
       training-batch-size: {type: int, default: 1}
       test-batch-size: {type: int, default: 1}
       class-weights: {type: string, default: '1.0,1.0'}
-      loss-function: {type: string, default: 'dice-ce'}
       ce-loss-weight: {type: float, default: 1.0}
       dice-loss-weight: {type: float, default: 1.0}
       cross-validation-folds: {type: int, default: 5}
@@ -70,7 +69,6 @@ entry_points:
             --training-batch-size {training-batch-size} \
             --test-batch-size {test-batch-size} \
             --class-weights {class-weights} \
-            --loss-function {loss-function} \
             --ce-loss-weight {ce-loss-weight} \
             --dice-loss-weight {dice-loss-weight} \
             --cross-validation-folds {cross-validation-folds} \

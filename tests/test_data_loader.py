@@ -336,7 +336,6 @@ def test_training_augmentation_defaults_to_requested_patch_and_rotation():
     assert args.random_rotation_degrees == 10.0
     assert args.random_rotation_90_probability == 0.5
     assert args.target_voxel_spacing == (3.0, 1.0, 1.0)
-    assert args.loss_function == "dice-ce"
     assert args.cross_validation_folds == 5
     assert args.validation_fold == 0
     assert args.dropout_rate == 0.10
