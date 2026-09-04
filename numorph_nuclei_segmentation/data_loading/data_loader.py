@@ -439,11 +439,21 @@ def resample_volume_pair(
         size=output_shape,
         mode="nearest-exact",
     )[0, 0].to(torch.int64)
-    # Voxel-centre coordinates map as (p + .5) * source / target - .5.
-    for centroid in _component_centroids(label):
-        transformed = np.rint((centroid + 0.5) * resize_factors - 0.5).astype(int)
-        if np.all(transformed >= 0) and np.all(transformed < np.asarray(output_shape)):
-            resized_label[tuple(transformed)] = 1
+    # Nearest-neighbour interpolation preserves every source voxel when no
+    # axis shrinks. Connected-component recovery is only needed while
+    # downsampling; running the Python flood fill for the common equal-spacing
+    # or upsampling case needlessly scans the entire foreground mask and can
+    # make a DataLoader appear to hang on large volumes.
+    if np.any(resize_factors < 1.0):
+        # Voxel-centre coordinates map as (p + .5) * source / target - .5.
+        for centroid in _component_centroids(label):
+            transformed = np.rint((centroid + 0.5) * resize_factors - 0.5).astype(
+                int
+            )
+            if np.all(transformed >= 0) and np.all(
+                transformed < np.asarray(output_shape)
+            ):
+                resized_label[tuple(transformed)] = 1
     return resized_image.numpy(), resized_label.numpy()
 
 
@@ -785,7 +795,14 @@ class NumorphDataModule(pl.LightningDataModule):
             batch_size=self.args["training_batch_size"],
             num_workers=self.args["num_workers"],
             shuffle=True,
-            persistent_workers=self.args["num_workers"] > 0,
+            # Each worker owns a VolumeDataset cache containing resampled 3-D
+            # arrays. Keeping workers alive makes those caches grow across
+            # shuffled epochs and also leaves validation workers (and their
+            # full-volume caches) resident while training. Besides multiplying
+            # memory usage, persistent TIFF/PyTorch workers can stall when the
+            # next epoch is reset. Recreate them at epoch boundaries so their
+            # native resources and cached volumes are released deterministically.
+            persistent_workers=False,
         )
 
     def test_dataloader(self):
@@ -797,7 +814,7 @@ class NumorphDataModule(pl.LightningDataModule):
             batch_size=1,
             num_workers=self.args["num_workers"],
             shuffle=False,
-            persistent_workers=self.args["num_workers"] > 0,
+            persistent_workers=False,
         )
 
     def val_dataloader(self):
