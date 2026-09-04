@@ -31,7 +31,10 @@ entry_points:
       min-lr: {type: float, default: 0.000001}
       training-batch-size: {type: int, default: 1}
       test-batch-size: {type: int, default: 1}
-      class-weights: {type: string, default: '0.2, 1.0'}
+      class-weights: {type: string, default: '1.0,1.0'}
+      loss-function: {type: string, default: 'dice-ce'}
+      ce-loss-weight: {type: float, default: 1.0}
+      dice-loss-weight: {type: float, default: 1.0}
       cross-validation-folds: {type: int, default: 5}
       validation-fold: {type: int, default: 0}
       test-epochs: {type: int, default: 10}
@@ -41,9 +44,12 @@ entry_points:
       num_workers: {type: int, default: 24}
       dropout-rate: {type: float, default: 0.10}
       patch-size: {type: string, default: '16,64,64'}
+      target-voxel-spacing: {type: string, default: '3.0,1.0,1.0'}
       normalize-input: {type: string, default: '--normalize-input'}
       patches-per-volume: {type: int, default: 8}
       foreground-patch-probability: {type: float, default: 0.8}
+      random-rotation-degrees: {type: float, default: 10.0}
+      random-rotation-90-probability: {type: float, default: 0.5}
     command: |
           python -m numorph_nuclei_segmentation.numorph_nuclei_segmentation \
             --max_epochs {max_epochs} \
@@ -62,6 +68,9 @@ entry_points:
             --training-batch-size {training-batch-size} \
             --test-batch-size {test-batch-size} \
             --class-weights {class-weights} \
+            --loss-function {loss-function} \
+            --ce-loss-weight {ce-loss-weight} \
+            --dice-loss-weight {dice-loss-weight} \
             --cross-validation-folds {cross-validation-folds} \
             --validation-fold {validation-fold} \
             --test-epochs {test-epochs} \
@@ -71,6 +80,9 @@ entry_points:
             --num_workers {num_workers} \
             --dropout-rate {dropout-rate} \
             --patch-size {patch-size} \
+            --target-voxel-spacing {target-voxel-spacing} \
             --patches-per-volume {patches-per-volume} \
             --foreground-patch-probability {foreground-patch-probability} \
+            --random-rotation-degrees {random-rotation-degrees} \
+            --random-rotation-90-probability {random-rotation-90-probability} \
             {normalize-input}
