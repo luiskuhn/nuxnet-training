@@ -212,7 +212,10 @@ def main():
         accelerator=args.accelerator,
         devices=devices,
         strategy=args.strategy,
-        deterministic=True,
+        # Keep deterministic kernels where PyTorch provides them, but allow
+        # operations such as CUDA's 3D cross-entropy backward pass that do not
+        # currently have a deterministic implementation.
+        deterministic="warn",
         benchmark=False,
         callbacks=[checkpoint, lr_monitor],
         logger=TensorBoardLogger(output),
