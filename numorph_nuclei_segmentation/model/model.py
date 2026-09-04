@@ -70,7 +70,7 @@ class NumorphSegmentator(pl.LightningModule):
                 image,
                 self.model,
                 self._patch_size(),
-                self.args.get("inference_overlap", 0.5),
+                self.args.get("inference_overlap", 0.0),
                 self.args.get("test_batch_size", 1),
             )
             if sliding
@@ -170,7 +170,7 @@ def _window_starts(length, window, overlap):
     return starts
 
 
-def sliding_window_inference(image, predictor, patch_size, overlap=0.5, batch_size=1):
+def sliding_window_inference(image, predictor, patch_size, overlap=0.0, batch_size=1):
     """Reconstruct raw logits for one or more CZYX volumes from bounded windows.
 
     Uniform normalized accumulation covers borders exactly. Smaller volumes are
