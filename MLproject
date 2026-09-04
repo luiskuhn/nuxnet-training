@@ -31,7 +31,7 @@ entry_points:
       min-lr: {type: float, default: 0.000001}
       training-batch-size: {type: int, default: 1}
       test-batch-size: {type: int, default: 1}
-      inference-overlap: {type: float, default: 0.5}
+      inference-overlap: {type: float, default: 0.0}
       class-weights: {type: string, default: '1.0,1.0'}
       ce-loss-weight: {type: float, default: 1.0}
       dice-loss-weight: {type: float, default: 1.0}
@@ -41,7 +41,7 @@ entry_points:
       dataset-path: {type: string, default: '/data/'}
       n-channels: {type: int, default: 1}
       n-class: {type: int, default: 2}
-      num_workers: {type: int, default: 24}
+      num_workers: {type: int, default: 2}
       dropout-rate: {type: float, default: 0.10}
       initial-weights: {type: string, default: 'none'}
       parent-metadata: {type: string, default: 'none'}

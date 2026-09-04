@@ -736,7 +736,7 @@ class NumorphDataModule(pl.LightningDataModule):
             raise ValueError("patches-per-volume must be at least 1")
         if not 0.0 <= self.args["foreground_patch_probability"] <= 1.0:
             raise ValueError("foreground-patch-probability must be between 0 and 1")
-        inference_overlap = self.args.get("inference_overlap", 0.5)
+        inference_overlap = self.args.get("inference_overlap", 0.0)
         if not 0 <= inference_overlap < 1:
             raise ValueError("inference-overlap must be in [0, 1)")
         rotation_degrees = self.args.get("random_rotation_degrees", 2.0)
@@ -795,6 +795,13 @@ class NumorphDataModule(pl.LightningDataModule):
             batch_size=self.args["training_batch_size"],
             num_workers=self.args["num_workers"],
             shuffle=True,
+            # Lightning has already initialized CUDA by the time this iterator
+            # is recreated for the next epoch.  Forking worker processes from
+            # that state can deadlock (most visibly at an epoch's 100% progress
+            # line), so use a clean interpreter for every worker instead.
+            multiprocessing_context=(
+                "spawn" if self.args["num_workers"] > 0 else None
+            ),
             # Each worker owns a VolumeDataset cache containing resampled 3-D
             # arrays. Keeping workers alive makes those caches grow across
             # shuffled epochs and also leaves validation workers (and their
@@ -814,6 +821,9 @@ class NumorphDataModule(pl.LightningDataModule):
             batch_size=1,
             num_workers=self.args["num_workers"],
             shuffle=False,
+            multiprocessing_context=(
+                "spawn" if self.args["num_workers"] > 0 else None
+            ),
             persistent_workers=False,
         )
 

@@ -152,8 +152,11 @@ def build_parser():
     parser.add_argument(
         "--inference-overlap",
         type=overlap,
-        default=0.5,
-        help="Fractional overlap between validation/test sliding windows in [0,1)",
+        default=0.0,
+        help=(
+            "Fractional overlap between validation/test sliding windows in [0,1); "
+            "higher values reduce tile seams but substantially increase 3-D inference work"
+        ),
     )
     parser.add_argument(
         "--class-weights",
