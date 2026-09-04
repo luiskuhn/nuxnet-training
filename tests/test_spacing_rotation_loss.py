@@ -1,4 +1,6 @@
+import ast
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -10,6 +12,31 @@ from numorph_nuclei_segmentation.data_loading.data_loader import (
 )
 from numorph_nuclei_segmentation.losses import DiceCrossEntropyLoss, FocalLoss
 from numorph_nuclei_segmentation.numorph_nuclei_segmentation import build_parser
+
+
+def test_trainer_warns_instead_of_failing_for_nondeterministic_cuda_ops():
+    entrypoint = (
+        Path(__file__).parents[1]
+        / "numorph_nuclei_segmentation"
+        / "numorph_nuclei_segmentation.py"
+    )
+    tree = ast.parse(entrypoint.read_text(encoding="utf-8"))
+    trainer_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "Trainer"
+    ]
+
+    assert len(trainer_calls) == 1
+    deterministic = next(
+        keyword.value
+        for keyword in trainer_calls[0].keywords
+        if keyword.arg == "deterministic"
+    )
+    assert isinstance(deterministic, ast.Constant)
+    assert deterministic.value == "warn"
 
 
 def _physical_object(spacing):
