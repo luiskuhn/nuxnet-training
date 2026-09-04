@@ -53,6 +53,14 @@ def probability(value: str) -> float:
     return parsed
 
 
+def overlap(value: str) -> float:
+    """Parse a sliding-window overlap fraction in the half-open range [0, 1)."""
+    parsed = float(value)
+    if not 0.0 <= parsed < 1.0:
+        raise argparse.ArgumentTypeError("overlap must be in [0, 1)")
+    return parsed
+
+
 def optional_path(value: str) -> str | None:
     """Translate MLproject's explicit empty-path sentinel."""
     return None if value.strip().lower() in {"", "none"} else value
@@ -61,7 +69,9 @@ def optional_path(value: str) -> str | None:
 def validate_parent_initialization(weights: str | None, metadata: str | None) -> None:
     """Ensure transfer weights and their exported metadata remain paired."""
     if bool(weights) != bool(metadata):
-        raise ValueError("--initial-weights and --parent-metadata must be provided together")
+        raise ValueError(
+            "--initial-weights and --parent-metadata must be provided together"
+        )
     if not weights:
         return
     weights_path, metadata_path = Path(weights), Path(metadata)
@@ -98,25 +108,25 @@ def build_parser():
         "--lr-scheduler-factor",
         type=float,
         default=0.5,
-        help="Factor applied when training loss plateaus",
+        help="Factor applied when foreground validation IoU plateaus",
     )
     parser.add_argument(
         "--lr-scheduler-patience",
         type=int,
         default=5,
-        help="Plateau epochs tolerated before reducing the learning rate",
+        help="Validation evaluations without sufficient IoU improvement before LR reduction",
     )
     parser.add_argument(
         "--lr-scheduler-threshold",
         type=float,
         default=1e-5,
-        help="Minimum absolute training-loss improvement",
+        help="Minimum absolute foreground validation-IoU improvement",
     )
     parser.add_argument(
         "--lr-scheduler-cooldown",
         type=int,
         default=2,
-        help="Epochs to wait after a learning-rate reduction",
+        help="Validation evaluations to wait after a learning-rate reduction",
     )
     parser.add_argument(
         "--min-lr",
@@ -125,7 +135,18 @@ def build_parser():
         help="Minimum learning rate used by the plateau scheduler",
     )
     parser.add_argument("--training-batch-size", type=int, default=1)
-    parser.add_argument("--test-batch-size", type=int, default=1)
+    parser.add_argument(
+        "--test-batch-size",
+        type=int,
+        default=1,
+        help="Number of validation/test inference windows evaluated simultaneously",
+    )
+    parser.add_argument(
+        "--inference-overlap",
+        type=overlap,
+        default=0.5,
+        help="Fractional overlap between validation/test sliding windows in [0,1)",
+    )
     parser.add_argument(
         "--class-weights",
         default="1.0,1.0",
@@ -246,7 +267,7 @@ def main():
         "/mlruns" if "MLF_CORE_DOCKER_RUN" in os.environ else "lightning_logs"
     )
     checkpoint = ModelCheckpoint(
-        dirpath=output / "checkpoints", save_top_k=1, monitor="val_avg_loss", mode="min"
+        dirpath=output / "checkpoints", save_top_k=1, monitor="val_iou_1", mode="max"
     )
     lr_monitor = LearningRateMonitor(logging_interval="epoch")
     devices = int(args.devices) if args.devices.isdigit() else args.devices

@@ -17,6 +17,7 @@ def test_mlproject_exposes_and_forwards_anisotropic_training_parameters():
         "class-weights": "1.0,1.0",
         "initial-weights": "none",
         "parent-metadata": "none",
+        "inference-overlap": 0.5,
     }
 
     for name, default in expected_defaults.items():
