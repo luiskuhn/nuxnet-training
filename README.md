@@ -10,12 +10,31 @@ Reproducible 3D U-Net training for nucleus-marker detection in NuMorph light-she
 
 The model is a compact residual 3D U-Net with 32-, 64-, and 128-channel feature levels. Two stride-2 convolutions form the encoder, and two nearest-neighbor upsampling stages restore the original resolution while reusing encoder features through skip connections. Every two-convolution block has a residual shortcut (a normalized 1×1×1 projection when channels change), and the final 1×1×1 head emits two-channel background/marker logits. Spatial dropout acts only on learned feature maps, never directly on the raw input.
 
-Training uses focal loss (fixed $\gamma=2$), Adam, validation-loss checkpointing and reports loss, voxel accuracy, per-class IoU and mean IoU. Because the foreground is sparse, prefer nucleus-class and mean IoU over accuracy when comparing runs. The architecture remains below 2.5 million parameters and retains the compact model's memory profile.
+Training defaults to unweighted cross-entropy plus foreground soft Dice (focal loss with fixed $\gamma=2$ remains selectable), Adam, validation-loss checkpointing and reports loss, voxel accuracy, per-class IoU and mean IoU. Because the foreground is sparse, prefer nucleus-class and mean IoU over accuracy when comparing runs. The architecture remains below 2.5 million parameters and retains the compact model's memory profile.
 
 The default `NUMORPH_SEM_SEG_DATASET` contains 32 paired OME-TIFF image/mask volumes: 16 at 0.75 × 0.75 × 2.5 µm and 16 at 1.21 × 1.21 × 4.0 µm. Images are normalized, single-channel `float32`; masks are binary `uint8`.
 
 > [!IMPORTANT]
 > Masks are manually curated **2D middle-Z nucleus markers for detection**, stored in 3D volumes. They are not complete 3D boundaries or instance segmentations. Confirm the dataset's reuse terms before redistribution because its packaged metadata currently records the license and public resource identifiers as pending.
+
+## Physical-space training pipeline
+
+Every image/mask pair is calibrated from OME `PhysicalSizeX/Y/Z` metadata and resampled, in **Z,Y,X** order, to `--target-voxel-spacing` (default `3.0,1.0,1.0` µm/voxel) before patches are selected. Images use anti-aliased trilinear resampling, masks use nearest-exact interpolation, and a centroid safeguard prevents thin one-slice marker components from disappearing. Resampled volumes are cached so multiple patches do not repeat this work. The default `32,128,128` patch therefore represents approximately `96 × 128 × 128` µm for either source resolution.
+
+Training augmentation is limited to exact and continuous rotations in the XY plane, so Z is never mixed with a lateral axis. Validation and testing use only deterministic spacing normalization and centered cropping. Random scale jitter is intentionally not included.
+
+## Logits, loss, and probabilities
+
+The U-Net head returns raw two-channel logits. New runs default to `--loss-function dice-ce`, which computes
+
+```text
+loss = ce_loss_weight × cross_entropy(logits, target)
+     + dice_loss_weight × foreground_soft_dice_loss(logits, target)
+```
+
+Cross-entropy receives the raw logits. Foreground Dice applies softmax internally, selects class 1, and aggregates intersection and denominator over the complete batch and all spatial dimensions with smoothing for finite empty-foreground behavior. Equal `--class-weights 1.0,1.0` means ordinary unweighted cross-entropy; non-uniform weights are an explicit experiment. The prior focal objective remains available through `--loss-function focal`.
+
+Metrics and packaged BioImage.IO inference apply softmax explicitly when probabilities are needed. Plain `UNet3D` state-dictionary and TorchScript consumers receive logits and must apply `softmax(dim=1)` themselves. They must also resample source OME data to the target Z,Y,X grid before tensor inference; the exported provenance and `rdf.yaml` record that grid but the tensor model cannot infer source voxel calibration from a tensor alone.
 
 ## Quick start with Docker
 
@@ -58,12 +77,16 @@ These options have the greatest effect on training quality, runtime, and memory:
 | LR scheduler cooldown | `--lr-scheduler-cooldown` | `2` | Epochs to wait after a rate reduction before resuming plateau checks. |
 | Minimum learning rate | `--min-lr` | `1e-6` | Lower bound for learning-rate reductions. |
 | Patch size | `--patch-size Z,Y,X` | `32,128,128` | Spatial context per sample. Each dimension must be divisible by four; larger patches require more memory. |
+| Target voxel spacing | `--target-voxel-spacing Z,Y,X` | `3.0,1.0,1.0` | Common synthetic grid in Z,Y,X order, in µm/voxel. |
 | Training batch size | `--training-batch-size` | `1` | Patches per optimizer step. Increase only when memory permits. |
 | Patches per volume | `--patches-per-volume` | `8` | Random training patches drawn from each volume per epoch. Higher values provide more sampling at greater runtime. |
 | Foreground sampling | `--foreground-patch-probability` | `0.8` | Probability that a training patch is centered on a marker (`0`–`1`). |
-| Class weights | `--class-weights` | `0.2,1.0` | Comma-separated focal-loss weights for background and marker. Supply one value per output class. |
+| Loss | `--loss-function` | `dice-ce` | Combined foreground Dice plus cross-entropy, or legacy `focal`. |
+| Loss weights | `--ce-loss-weight`, `--dice-loss-weight` | `1.0`, `1.0` | Contributions to the combined Dice+CE objective. |
+| Class weights | `--class-weights` | `1.0,1.0` | Optional explicit per-class weights; equal values give unweighted cross-entropy. |
 | Dropout | `--dropout-rate` | `0.10` | Probability for all 3D dropout layers: two per residual convolution block and one after each down/up transition. |
-| Rotation | `--random-rotation-degrees` | `2.0` | Maximum random 3D training rotation; use `0` to disable augmentation. |
+| Rotation | `--random-rotation-degrees` | `10.0` | Maximum continuous XY training rotation; Z is never mixed with lateral axes. |
+| Right-angle rotation | `--random-rotation-90-probability` | `0.5` | Probability of an exact random 0°, 90°, 180°, or 270° XY rotation. |
 | Folds | `--cross-validation-folds` | `5` | Number of shuffled, resolution-group-stratified folds (at least two). |
 | Held-out fold | `--validation-fold` | `0` | One-based validation/test fold. `0` selects reproducibly from the general seed. |
 | Validation interval | `--test-epochs` | `10` | Run validation every N epochs. Final testing always uses the best checkpoint. |
@@ -115,7 +138,10 @@ docker run --rm --gpus all \
   --max_epochs 1000 --lr 0.0001 \
   --patch-size 32,128,128 --training-batch-size 1 \
   --patches-per-volume 8 --foreground-patch-probability 0.8 \
-  --class-weights 0.2,1.0 --validation-fold 1
+  --target-voxel-spacing 3.0,1.0,1.0 \
+  --random-rotation-degrees 10.0 --random-rotation-90-probability 0.5 \
+  --loss-function dice-ce --ce-loss-weight 1.0 --dice-loss-weight 1.0 \
+  --class-weights 1.0,1.0 --validation-fold 1
 ```
 
 ### Fast end-to-end smoke test
@@ -166,7 +192,7 @@ Paths are relative to the dataset root and every image must have exactly one mas
 
 All records participate in a shuffled, group-stratified split. The held-out fold supplies both validation data during fitting and final test metrics; a run fits **one model**, not one model per fold. The resolved fold is printed and logged to MLflow as `selected_validation_fold`.
 
-Training uses random crops, foreground-aware sampling and rotation; validation/test use centered crops. Smaller volumes are zero padded. Input images use trilinear interpolation and masks use nearest-neighbour interpolation.
+The [physical-space training pipeline](#physical-space-training-pipeline) is applied before patch selection. Training then adds random crops and foreground-aware sampling; validation/test use centered crops and no random augmentation. Smaller normalized volumes are zero padded.
 
 ## Other ways to run
 

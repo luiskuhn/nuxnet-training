@@ -35,7 +35,11 @@ def sha256(path: Path) -> str:
 
 def git_value(*args: str) -> str | None:
     result = subprocess.run(
-        ["git", *args], cwd=ROOT, text=True, capture_output=True, check=False  # nosec B603 B607
+        ["git", *args],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,  # nosec B603 B607
     )
     return result.stdout.strip() or None if result.returncode == 0 else None
 
@@ -47,7 +51,11 @@ def _load_state_dict(checkpoint: Path) -> dict[str, torch.Tensor]:
         raise ValueError("checkpoint must contain a PyTorch state dictionary")
     # Accept either the exported UNet weights or a Lightning NumorphSegmentator checkpoint.
     if any(key.startswith("model.") for key in state):
-        state = {key.removeprefix("model."): value for key, value in state.items() if key.startswith("model.")}
+        state = {
+            key.removeprefix("model."): value
+            for key, value in state.items()
+            if key.startswith("model.")
+        }
     return state
 
 
@@ -61,14 +69,31 @@ def _write_zip(source: Path, destination: Path) -> None:
 def validate_args(args: argparse.Namespace) -> None:
     """Validate package metadata and tensor options before doing expensive work."""
     if not (args.doi or args.citation_url):
-        raise ValueError("provide --doi or --citation-url so the citation is resolvable")
-    if len(args.test_shape) != 3 or any(size < 4 or size % 4 for size in args.test_shape):
-        raise ValueError("--test-shape must contain three comma-separated dimensions divisible by four")
+        raise ValueError(
+            "provide --doi or --citation-url so the citation is resolvable"
+        )
+    if len(args.test_shape) != 3 or any(
+        size < 4 or size % 4 for size in args.test_shape
+    ):
+        raise ValueError(
+            "--test-shape must contain three comma-separated dimensions divisible by four"
+        )
     if args.input_channels < 1 or args.classes < 1:
         raise ValueError("--input-channels and --classes must be positive")
     if not 0 <= args.dropout < 1:
         raise ValueError("--dropout must be in the interval [0, 1)")
-    if args.cover and Path(args.cover).suffix.lower() not in {".gif", ".jpeg", ".jpg", ".png", ".svg"}:
+    target_spacing = tuple(getattr(args, "target_voxel_spacing", (3.0, 1.0, 1.0)))
+    if len(target_spacing) != 3 or any(value <= 0 for value in target_spacing):
+        raise ValueError(
+            "--target-voxel-spacing must contain three positive values in Z,Y,X order"
+        )
+    if args.cover and Path(args.cover).suffix.lower() not in {
+        ".gif",
+        ".jpeg",
+        ".jpg",
+        ".png",
+        ".svg",
+    }:
         raise ValueError("--cover must be a GIF, JPEG, PNG, or SVG image")
 
 
@@ -79,22 +104,31 @@ def export_model(args: argparse.Namespace) -> tuple[Path, Path]:
         raise FileNotFoundError(f"checkpoint not found: {checkpoint}")
     if output.exists() and any(output.iterdir()):
         if not args.overwrite:
-            raise FileExistsError(f"output directory is not empty: {output}; pass --overwrite to replace it")
+            raise FileExistsError(
+                f"output directory is not empty: {output}; pass --overwrite to replace it"
+            )
         shutil.rmtree(output)
     validate_args(args)
     output.mkdir(parents=True, exist_ok=True)
 
-    model = UNet3D(in_channels=args.input_channels, classes=args.classes, dropout=args.dropout)
+    model = UNet3D(
+        in_channels=args.input_channels, classes=args.classes, dropout=args.dropout
+    )
     model.load_state_dict(_load_state_dict(checkpoint), strict=True)
     model.eval()
 
     weights = output / "weights.pt"
     torch.save(model.state_dict(), weights)  # nosec B614: tensor-only state dictionary
     generator = torch.Generator().manual_seed(0)
-    raw_example = torch.rand((1, args.input_channels, *args.test_shape), generator=generator, dtype=torch.float32)
+    raw_example = torch.rand(
+        (1, args.input_channels, *args.test_shape),
+        generator=generator,
+        dtype=torch.float32,
+    )
     if args.normalize_input:
         example = (raw_example - raw_example.amin(dim=(2, 3, 4), keepdim=True)) / (
-            raw_example.amax(dim=(2, 3, 4), keepdim=True) - raw_example.amin(dim=(2, 3, 4), keepdim=True)
+            raw_example.amax(dim=(2, 3, 4), keepdim=True)
+            - raw_example.amin(dim=(2, 3, 4), keepdim=True)
         )
     else:
         example = raw_example
@@ -104,10 +138,17 @@ def export_model(args: argparse.Namespace) -> tuple[Path, Path]:
     traced.save(str(output / "model.ts"))
     np.save(output / "test-input.npy", raw_example.numpy())
     np.save(output / "test-output.npy", prediction.numpy())
-    shutil.copy2(ROOT / "numorph_nuclei_segmentation/model/unet_3d_models.py", output / "unet_3d_models.py")
+    shutil.copy2(
+        ROOT / "numorph_nuclei_segmentation/model/unet_3d_models.py",
+        output / "unet_3d_models.py",
+    )
     shutil.copy2(ROOT / "environment.yml", output / "environment.yml")
     shutil.copy2(ROOT / "LICENSE", output / "LICENSE")
-    cover_source = Path(args.cover).resolve() if args.cover else ROOT / "docs/images/graph_abstract_nuxnet_training.png"
+    cover_source = (
+        Path(args.cover).resolve()
+        if args.cover
+        else ROOT / "docs/images/graph_abstract_nuxnet_training.png"
+    )
     if not cover_source.is_file():
         raise FileNotFoundError(f"cover image not found: {cover_source}")
     shutil.copy2(cover_source, output / f"cover{cover_source.suffix.lower()}")
@@ -118,16 +159,34 @@ def export_model(args: argparse.Namespace) -> tuple[Path, Path]:
     authors = [{"name": args.author, "github_user": args.github_user}]
     if args.author_orcid:
         authors[0]["orcid"] = args.author_orcid
+    target_spacing = tuple(getattr(args, "target_voxel_spacing", (3.0, 1.0, 1.0)))
     provenance = {
         "schema": "https://w3id.org/ro/crate/1.1",
         "created_utc": created,
-        "model": {"name": args.name, "version": args.model_version, "checkpoint_sha256": sha256(checkpoint), "exported_weights_sha256": sha256(weights)},
-        "training": {"dataset": args.dataset, "dataset_version": args.dataset_version, "mlflow_run_id": args.mlflow_run_id, "normalize_input": args.normalize_input},
-        "software": {"python": platform.python_version(), "torch": str(torch.__version__), "numpy": np.__version__},
+        "model": {
+            "name": args.name,
+            "version": args.model_version,
+            "checkpoint_sha256": sha256(checkpoint),
+            "exported_weights_sha256": sha256(weights),
+        },
+        "training": {
+            "dataset": args.dataset,
+            "dataset_version": args.dataset_version,
+            "mlflow_run_id": args.mlflow_run_id,
+            "normalize_input": args.normalize_input,
+            "target_voxel_spacing_zyx_um": target_spacing,
+        },
+        "software": {
+            "python": platform.python_version(),
+            "torch": str(torch.__version__),
+            "numpy": np.__version__,
+        },
         "source": {"repository": remote, "git_commit": commit},
         "export_command": sys.argv,
     }
-    (output / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
+    (output / "provenance.json").write_text(
+        json.dumps(provenance, indent=2) + "\n", encoding="utf-8"
+    )
 
     card = f"""---
 license: {json.dumps(args.license)}
@@ -152,7 +211,7 @@ datasets:
 - **Model type:** Residual 3D U-Net with two downsampling levels
 - **Input modality:** Single-channel light-sheet fluorescence microscopy
 - **License:** {args.license}
-- **Source:** {remote or 'Not recorded'} at revision `{commit or 'not recorded'}`
+- **Source:** {remote or "Not recorded"} at revision `{commit or "not recorded"}`
 
 ## Uses
 
@@ -160,7 +219,7 @@ The direct use is detection of manually curated middle-Z nucleus markers in clea
 
 ## Task details
 
-Input is `float32` in `BCZYX` order. Spatial dimensions must be divisible by four. {"BioImage.IO consumers apply per-volume min/max scaling over `Z`, `Y`, and `X`." if args.normalize_input else "No intensity normalization is included; inputs must already match the values used for training."} The network emits `{args.classes}`-channel logits; the packaged BioImage.IO postprocessing applies softmax and returns probabilities in the same spatial shape.
+Input is `float32` in `BCZYX` order on a `{target_spacing}` µm/voxel Z,Y,X grid. Spatial dimensions must be divisible by four. Source OME volumes must be spacing-normalized before invoking the tensor model. {"BioImage.IO consumers apply per-volume min/max scaling over `Z`, `Y`, and `X`." if args.normalize_input else "No intensity normalization is included; inputs must already match the values used for training."} The network emits `{args.classes}`-channel logits; the packaged BioImage.IO postprocessing applies softmax and returns probabilities in the same spatial shape.
 
 ## Bias, risks, and limitations
 
@@ -169,7 +228,7 @@ Training annotations are sparse two-dimensional middle-Z markers embedded in vol
 ## Training details
 
 - **Dataset:** `{args.dataset}` (version `{args.dataset_version}`)
-- **MLflow run:** `{args.mlflow_run_id or 'Not recorded'}`
+- **MLflow run:** `{args.mlflow_run_id or "Not recorded"}`
 - **Objective:** focal loss (gamma 2) with Adam optimization
 - **Augmentation:** foreground-aware random crops and small random 3D rotations
 - **Environment:** [`environment.yml`](environment.yml)
@@ -185,7 +244,7 @@ Technical reproducibility is represented by `test-input.npy` and `test-output.np
 
 ## Citation
 
-{args.citation}{f' DOI: {args.doi}.' if args.doi else f' {args.citation_url}'}
+{args.citation}{f" DOI: {args.doi}." if args.doi else f" {args.citation_url}"}
 """
     (output / "README.md").write_text(card, encoding="utf-8")
 
@@ -202,7 +261,16 @@ Technical reproducibility is represented by `test-input.npy` and `test-output.np
     ]
     preprocessing = [{"id": "ensure_dtype", "kwargs": {"dtype": "float32"}}]
     if args.normalize_input:
-        preprocessing.append({"id": "scale_range", "kwargs": {"axes": ["z", "y", "x"], "min_percentile": 0.0, "max_percentile": 100.0}})
+        preprocessing.append(
+            {
+                "id": "scale_range",
+                "kwargs": {
+                    "axes": ["z", "y", "x"],
+                    "min_percentile": 0.0,
+                    "max_percentile": 100.0,
+                },
+            }
+        )
     rdf = {
         "format_version": "0.5.14",
         "type": "model",
@@ -213,38 +281,108 @@ Technical reproducibility is represented by `test-input.npy` and `test-output.np
         "authors": authors,
         "maintainers": [{"name": args.author, "github_user": args.github_user}],
         "license": args.license,
-        "documentation": {"source": "README.md", "sha256": sha256(output / "README.md")},
+        "documentation": {
+            "source": "README.md",
+            "sha256": sha256(output / "README.md"),
+        },
         "covers": [{"source": cover.name, "sha256": sha256(cover)}],
         "git_repo": remote,
-        "tags": ["3d", "pytorch", "unet", "nucleus", "segmentation", "light-sheet-microscopy", "mouse"],
+        "tags": [
+            "3d",
+            "pytorch",
+            "unet",
+            "nucleus",
+            "segmentation",
+            "light-sheet-microscopy",
+            "mouse",
+        ],
         "cite": [citation],
-        "inputs": [{
-            "id": "input", "description": "Raw microscopy intensity volume",
-            "axes": [{"type": "batch", "size": 1}, {"type": "channel", "channel_names": [f"channel_{i}" for i in range(args.input_channels)]}, *spatial_input_axes],
-            "data": {"type": "float32", "range": [None, None]},
-            "preprocessing": preprocessing,
-            "test_tensor": {"source": "test-input.npy", "sha256": sha256(output / "test-input.npy")},
-        }],
-        "outputs": [{
-            "id": "probabilities", "description": "Background and nucleus-marker probabilities",
-            "axes": [{"type": "batch"}, {"type": "channel", "channel_names": ["background", "marker"] if args.classes == 2 else [f"class_{i}" for i in range(args.classes)]}, *spatial_output_axes],
-            "data": {"type": "float32", "range": [0.0, 1.0]},
-            "postprocessing": [{"id": "softmax", "kwargs": {"axis": "channel"}}, {"id": "ensure_dtype", "kwargs": {"dtype": "float32"}}],
-            "test_tensor": {"source": "test-output.npy", "sha256": sha256(output / "test-output.npy")},
-        }],
+        "inputs": [
+            {
+                "id": "input",
+                "description": "Raw microscopy intensity volume",
+                "axes": [
+                    {"type": "batch", "size": 1},
+                    {
+                        "type": "channel",
+                        "channel_names": [
+                            f"channel_{i}" for i in range(args.input_channels)
+                        ],
+                    },
+                    *spatial_input_axes,
+                ],
+                "data": {"type": "float32", "range": [None, None]},
+                "preprocessing": preprocessing,
+                "test_tensor": {
+                    "source": "test-input.npy",
+                    "sha256": sha256(output / "test-input.npy"),
+                },
+            }
+        ],
+        "outputs": [
+            {
+                "id": "probabilities",
+                "description": "Background and nucleus-marker probabilities",
+                "axes": [
+                    {"type": "batch"},
+                    {
+                        "type": "channel",
+                        "channel_names": ["background", "marker"]
+                        if args.classes == 2
+                        else [f"class_{i}" for i in range(args.classes)],
+                    },
+                    *spatial_output_axes,
+                ],
+                "data": {"type": "float32", "range": [0.0, 1.0]},
+                "postprocessing": [
+                    {"id": "softmax", "kwargs": {"axis": "channel"}},
+                    {"id": "ensure_dtype", "kwargs": {"dtype": "float32"}},
+                ],
+                "test_tensor": {
+                    "source": "test-output.npy",
+                    "sha256": sha256(output / "test-output.npy"),
+                },
+            }
+        ],
         "weights": {
-            "torchscript": {"source": "model.ts", "sha256": sha256(output / "model.ts"), "parent": "pytorch_state_dict", "pytorch_version": str(torch.__version__)},
+            "torchscript": {
+                "source": "model.ts",
+                "sha256": sha256(output / "model.ts"),
+                "parent": "pytorch_state_dict",
+                "pytorch_version": str(torch.__version__),
+            },
             "pytorch_state_dict": {
-                "source": "weights.pt", "sha256": sha256(weights),
-                "architecture": {"source": "unet_3d_models.py", "sha256": sha256(output / "unet_3d_models.py"), "callable": "UNet3D", "kwargs": {
-                    "in_channels": args.input_channels, "classes": args.classes, "dropout": args.dropout,
-                }},
-                "dependencies": {"source": "environment.yml", "sha256": sha256(output / "environment.yml")}, "pytorch_version": str(torch.__version__),
+                "source": "weights.pt",
+                "sha256": sha256(weights),
+                "architecture": {
+                    "source": "unet_3d_models.py",
+                    "sha256": sha256(output / "unet_3d_models.py"),
+                    "callable": "UNet3D",
+                    "kwargs": {
+                        "in_channels": args.input_channels,
+                        "classes": args.classes,
+                        "dropout": args.dropout,
+                    },
+                },
+                "dependencies": {
+                    "source": "environment.yml",
+                    "sha256": sha256(output / "environment.yml"),
+                },
+                "pytorch_version": str(torch.__version__),
             },
         },
-        "config": {"nuxnet": {"provenance": "provenance.json", "repository": remote, "git_commit": commit}},
+        "config": {
+            "nuxnet": {
+                "provenance": "provenance.json",
+                "repository": remote,
+                "git_commit": commit,
+                "target_voxel_spacing_zyx_um": list(target_spacing),
+            }
+        },
     }
-    (output / "rdf.yaml").write_text(yaml.safe_dump(rdf, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    (output / "rdf.yaml").write_text(
+        yaml.safe_dump(rdf, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
 
     inventory = """# Exported artifact inventory
 
@@ -265,7 +403,11 @@ Technical reproducibility is represented by `test-input.npy` and `test-output.np
 Upload the sibling ZIP as one BioImage.IO resource. Upload the directory contents as one Hugging Face model repository; Hugging Face reads the front matter from `README.md`. `rdf.yaml` references only files inside the ZIP and records hashes for executable inputs, outputs, architecture, environment, documentation, cover, and weights.
 """
     (output / "ARTIFACTS.md").write_text(inventory, encoding="utf-8")
-    checksums = [f"{sha256(path)}  {path.name}" for path in sorted(output.iterdir()) if path.is_file()]
+    checksums = [
+        f"{sha256(path)}  {path.name}"
+        for path in sorted(output.iterdir())
+        if path.is_file()
+    ]
     (output / "SHA256SUMS").write_text("\n".join(checksums) + "\n", encoding="utf-8")
     archive = output.with_suffix(".zip")
     _write_zip(output, archive)
@@ -274,31 +416,65 @@ Upload the sibling ZIP as one BioImage.IO resource. Upload the directory content
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--checkpoint", required=True, help="Exported .pt state dictionary or Lightning checkpoint")
+    parser.add_argument(
+        "--checkpoint",
+        required=True,
+        help="Exported .pt state dictionary or Lightning checkpoint",
+    )
     parser.add_argument("--output-dir", default="output/model-package")
     parser.add_argument("--name", required=True)
     parser.add_argument("--description", required=True)
     parser.add_argument("--author", required=True)
     parser.add_argument("--author-orcid")
-    parser.add_argument("--github-user", required=True, help="GitHub username of the model maintainer")
+    parser.add_argument(
+        "--github-user", required=True, help="GitHub username of the model maintainer"
+    )
     parser.add_argument("--license", default="MIT")
     parser.add_argument("--citation", required=True)
     parser.add_argument("--doi")
     parser.add_argument("--citation-url")
-    parser.add_argument("--dataset", required=True, help="Resolvable dataset name or identifier")
+    parser.add_argument(
+        "--dataset", required=True, help="Resolvable dataset name or identifier"
+    )
     parser.add_argument("--dataset-version", required=True)
     parser.add_argument("--model-version", default="0.1.0")
     parser.add_argument("--mlflow-run-id")
     parser.add_argument("--source-repository")
     parser.add_argument("--git-commit")
-    parser.add_argument("--cover", help="Representative PNG/JPEG/GIF/SVG; defaults to the NuxNet graphical abstract")
+    parser.add_argument(
+        "--cover",
+        help="Representative PNG/JPEG/GIF/SVG; defaults to the NuxNet graphical abstract",
+    )
     parser.add_argument("--input-channels", type=int, default=1)
     parser.add_argument("--classes", type=int, default=2)
     parser.add_argument("--dropout", type=float, default=0.10)
-    parser.add_argument("--normalize-input", action=argparse.BooleanOptionalAction, default=True, help="Match the normalization setting used for training")
-    parser.add_argument("--test-shape", type=lambda value: tuple(map(int, value.split(","))), default=(4, 16, 16), metavar="Z,Y,X")
+    parser.add_argument(
+        "--normalize-input",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Match the normalization setting used for training",
+    )
+    parser.add_argument(
+        "--target-voxel-spacing",
+        type=lambda value: tuple(
+            float(component.strip()) for component in value.split(",")
+        ),
+        default=(3.0, 1.0, 1.0),
+        metavar="Z,Y,X",
+        help="Required input grid in Z,Y,X order, in µm/voxel",
+    )
+    parser.add_argument(
+        "--test-shape",
+        type=lambda value: tuple(map(int, value.split(","))),
+        default=(4, 16, 16),
+        metavar="Z,Y,X",
+    )
     parser.add_argument("--overwrite", action="store_true")
-    parser.add_argument("--validate", action="store_true", help="Run `bioimageio test` on the completed ZIP (requires bioimageio.core)")
+    parser.add_argument(
+        "--validate",
+        action="store_true",
+        help="Run `bioimageio test` on the completed ZIP (requires bioimageio.core)",
+    )
     return parser
 
 
@@ -308,7 +484,9 @@ def main() -> None:
     if args.validate:
         executable = shutil.which("bioimageio")
         if executable is None:
-            raise RuntimeError("--validate requires the `bioimageio` command from bioimageio.core")
+            raise RuntimeError(
+                "--validate requires the `bioimageio` command from bioimageio.core"
+            )
         subprocess.run([executable, "test", str(archive)], check=True)  # nosec B603
     print(f"Model package: {output}")
     print(f"BioImage.IO archive: {archive}")
