@@ -1,0 +1,64 @@
+format_version: 0.5.14
+type: model
+name: NuMorph nucleus-marker U-Net
+version: 1.0.0
+description: 3D U-Net for nucleus-marker detection in cleared mouse-brain microscopy
+authors:
+  - name: REPLACE WITH MODEL AUTHOR
+maintainers:
+  - name: REPLACE WITH MODEL MAINTAINER
+license: MIT
+documentation:
+  source: README.md
+covers:
+  - source: docs/images/graph_abstract_nuxnet_training.png
+tags: [3d, pytorch, unet, nucleus, segmentation, light-sheet-microscopy]
+cite:
+  - text: REPLACE WITH RESOLVABLE MODEL CITATION
+    url: https://github.com/luiskuhn/nuxnet-training
+inputs:
+  - id: input
+    description: Raw intensity volume
+    axes:
+      - {type: batch, size: 1}
+      - {type: channel, channel_names: [intensity]}
+      - {id: z, type: space, size: {min: 4, step: 4}}
+      - {id: y, type: space, size: {min: 4, step: 4}}
+      - {id: x, type: space, size: {min: 4, step: 4}}
+    data: {type: float32, range: [null, null]}
+    preprocessing:
+      - {id: ensure_dtype, kwargs: {dtype: float32}}
+      - id: scale_range
+        kwargs: {axes: [z, y, x], min_percentile: 0.0, max_percentile: 100.0}
+    test_tensor: {source: test-input.npy}
+outputs:
+  - id: probabilities
+    description: Background and marker probabilities
+    axes:
+      - {type: batch}
+      - {type: channel, channel_names: [background, marker]}
+      - {id: z, type: space, size: {tensor_id: input, axis_id: z}}
+      - {id: y, type: space, size: {tensor_id: input, axis_id: y}}
+      - {id: x, type: space, size: {tensor_id: input, axis_id: x}}
+    data: {type: float32, range: [0.0, 1.0]}
+    postprocessing:
+      - {id: softmax, kwargs: {axis: channel}}
+      - {id: ensure_dtype, kwargs: {dtype: float32}}
+    test_tensor: {source: test-output.npy}
+weights:
+  pytorch_state_dict:
+    source: weights.pt
+    architecture:
+      source: numorph_nuclei_segmentation/model/unet_3d_models.py
+      callable: UNet3D
+      kwargs: {in_channels: 1, classes: 2, dropout: 0.1}
+    dependencies:
+      source: environment.yml
+    pytorch_version: 2.5.1
+  torchscript:
+    source: model.ts
+    parent: pytorch_state_dict
+    pytorch_version: 2.5.1
+config:
+  project:
+    target_voxel_spacing_zyx_um: [3.0, 1.0, 1.0]

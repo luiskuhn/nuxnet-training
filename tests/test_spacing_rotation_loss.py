@@ -10,7 +10,7 @@ from numorph_nuclei_segmentation.data_loading.data_loader import (
     _random_rotate,
     resample_volume_pair,
 )
-from numorph_nuclei_segmentation.losses import DiceCrossEntropyLoss, FocalLoss
+from numorph_nuclei_segmentation.losses import DiceCrossEntropyLoss
 from numorph_nuclei_segmentation.numorph_nuclei_segmentation import build_parser
 
 
@@ -115,19 +115,14 @@ def test_dice_ce_is_finite_with_and_without_foreground_and_backpropagates():
         assert torch.isfinite(logits.grad).all()
 
 
-def test_focal_accepts_logits_and_new_cli_values_serialize():
-    logits = torch.randn(1, 2, 2, 4, 4, requires_grad=True)
-    target = torch.zeros(1, 2, 4, 4, dtype=torch.long)
-    loss = FocalLoss(
-        apply_nonlin=lambda value: torch.softmax(value, 1), alpha=np.ones(2)
-    )(logits, target)
-    loss.backward()
+def test_dice_ce_cli_values_have_expected_defaults():
     args = build_parser().parse_args([])
     assert args.target_voxel_spacing == (3.0, 1.0, 1.0)
     assert args.random_rotation_degrees == 10.0
     assert args.random_rotation_90_probability == 0.5
-    assert args.loss_function == "dice-ce"
     assert vars(args)["ce_loss_weight"] == vars(args)["dice_loss_weight"] == 1.0
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["--loss-function", "focal"])
 
 
 def test_target_spacing_cli_parses_valid_values_and_rejects_invalid_values():
@@ -150,8 +145,6 @@ def test_new_cli_hyperparameters_are_serializable_and_range_checked():
             "7.5",
             "--random-rotation-90-probability",
             "0.25",
-            "--loss-function",
-            "focal",
             "--ce-loss-weight",
             "0.5",
             "--dice-loss-weight",
@@ -162,7 +155,6 @@ def test_new_cli_hyperparameters_are_serializable_and_range_checked():
     assert serialized["target_voxel_spacing"] == [4.0, 1.2, 1.2]
     assert serialized["random_rotation_degrees"] == 7.5
     assert serialized["random_rotation_90_probability"] == 0.25
-    assert serialized["loss_function"] == "focal"
     with pytest.raises(SystemExit):
         parser.parse_args(["--random-rotation-90-probability", "1.1"])
     with pytest.raises(SystemExit):

@@ -4,7 +4,6 @@ import numpy as np
 import pytorch_lightning as pl
 import torch
 
-from numorph_nuclei_segmentation.losses.focal_loss import FocalLoss
 from numorph_nuclei_segmentation.losses.dice_ce_loss import DiceCrossEntropyLoss
 from numorph_nuclei_segmentation.metrics.metrics import accuracy, iou_fnc
 from numorph_nuclei_segmentation.model.unet_3d_models import UNet3D
@@ -20,6 +19,10 @@ class NumorphSegmentator(pl.LightningModule):
             classes=kwargs["n_class"],
             dropout=kwargs["dropout_rate"],
         )
+        initial_weights = kwargs.get("initial_weights")
+        if initial_weights:
+            state = torch.load(initial_weights, map_location="cpu", weights_only=True)
+            self.model.load_state_dict(state, strict=True)
         weights = np.asarray(
             [
                 float(value)
@@ -28,23 +31,14 @@ class NumorphSegmentator(pl.LightningModule):
         )
         if len(weights) != kwargs["n_class"]:
             raise ValueError("class-weights must contain one value per class")
-        if kwargs.get("loss_function", "dice-ce") == "focal":
-            self.criterion = FocalLoss(
-                apply_nonlin=torch.nn.Softmax(dim=1),
-                alpha=weights,
-                gamma=2,
-            )
-        else:
-            # 1,1 is intentionally treated as unweighted CE; non-uniform values
-            # remain available only when explicitly requested.
-            ce_weights = (
-                None if np.allclose(weights, np.ones_like(weights)) else weights
-            )
-            self.criterion = DiceCrossEntropyLoss(
-                kwargs.get("ce_loss_weight", 1.0),
-                kwargs.get("dice_loss_weight", 1.0),
-                ce_weights,
-            )
+        # 1,1 is intentionally treated as unweighted CE; non-uniform values
+        # remain available only when explicitly requested.
+        ce_weights = None if np.allclose(weights, np.ones_like(weights)) else weights
+        self.criterion = DiceCrossEntropyLoss(
+            kwargs.get("ce_loss_weight", 1.0),
+            kwargs.get("dice_loss_weight", 1.0),
+            ce_weights,
+        )
 
     def forward(self, x):
         return self.model(x)

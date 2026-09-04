@@ -1,0 +1,66 @@
+# Copy this file into the consuming project and replace every example value.
+# Tensor axes and processing are scientific metadata: do not copy them blindly.
+format_version: 0.5.14
+type: model
+name: Example image model
+version: 0.1.0
+description: Replace with a concise description of the trained model.
+authors:
+  - name: Example Author
+maintainers:
+  - name: Example Maintainer
+license: MIT
+documentation:
+  # Replaced by --model-card during package construction.
+  source: README.md
+covers:
+  # Resolved relative to this specification and copied into the package.
+  - source: assets/cover.png
+cite:
+  - text: Replace with a resolvable citation.
+    url: https://example.org/model-publication
+inputs:
+  - id: input
+    description: Replace with the model input semantics.
+    axes:
+      - {type: batch, size: 1}
+      - {type: channel, channel_names: [channel_0]}
+      - {id: y, type: space, size: {min: 16, step: 16}}
+      - {id: x, type: space, size: {min: 16, step: 16}}
+    data: {type: float32, range: [null, null]}
+    preprocessing:
+      - {id: ensure_dtype, kwargs: {dtype: float32}}
+    # Replaced by the corresponding --test-input, in RDF input order.
+    test_tensor: {source: test-input.npy}
+outputs:
+  - id: output
+    description: Replace with the model output semantics.
+    axes:
+      - {type: batch}
+      - {type: channel, channel_names: [channel_0]}
+      - {id: y, type: space, size: {tensor_id: input, axis_id: y}}
+      - {id: x, type: space, size: {tensor_id: input, axis_id: x}}
+    data: {type: float32, range: [null, null]}
+    # Add the transforms actually used by the exported model, if any.
+    postprocessing:
+      - {id: ensure_dtype, kwargs: {dtype: float32}}
+    # Replaced by the corresponding --test-output, in RDF output order.
+    test_tensor: {source: test-output.npy}
+weights:
+  pytorch_state_dict:
+    source: weights.pt
+    architecture:
+      # May instead be an installed "package.module:Constructor" callable with
+      # no source. Relative source files are copied into the package.
+      source: src/model_architecture.py
+      callable: Model
+      kwargs: {input_channels: 1, output_channels: 1}
+    dependencies:
+      source: environment.yml
+    pytorch_version: 2.5.1
+  # Remove this block if a TorchScript representation is not wanted. When it
+  # is present, build_model_package.py requires --trace-input.
+  torchscript:
+    source: model.ts
+    parent: pytorch_state_dict
+    pytorch_version: 2.5.1

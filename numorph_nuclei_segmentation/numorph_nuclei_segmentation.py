@@ -1,6 +1,8 @@
 """NuxNet training entry point."""
 
 import argparse
+import hashlib
+import json
 import os
 from pathlib import Path
 
@@ -49,6 +51,33 @@ def probability(value: str) -> float:
     if not 0.0 <= parsed <= 1.0:
         raise argparse.ArgumentTypeError("probability must be between 0 and 1")
     return parsed
+
+
+def optional_path(value: str) -> str | None:
+    """Translate MLproject's explicit empty-path sentinel."""
+    return None if value.strip().lower() in {"", "none"} else value
+
+
+def validate_parent_initialization(weights: str | None, metadata: str | None) -> None:
+    """Ensure transfer weights and their exported metadata remain paired."""
+    if bool(weights) != bool(metadata):
+        raise ValueError("--initial-weights and --parent-metadata must be provided together")
+    if not weights:
+        return
+    weights_path, metadata_path = Path(weights), Path(metadata)
+    if not weights_path.is_file():
+        raise FileNotFoundError(f"initial weights not found: {weights_path}")
+    if not metadata_path.is_file():
+        raise FileNotFoundError(f"parent metadata not found: {metadata_path}")
+    record = json.loads(metadata_path.read_text(encoding="utf-8"))
+    expected = record.get("weights_sha256")
+    checksum = hashlib.sha256()
+    with weights_path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            checksum.update(chunk)
+    digest = checksum.hexdigest()
+    if not expected or digest != expected:
+        raise ValueError("initial weights do not match the parent metadata checksum")
 
 
 def build_parser():
@@ -102,9 +131,6 @@ def build_parser():
         default="1.0,1.0",
         help="Explicit per-class weights (default is unweighted)",
     )
-    parser.add_argument(
-        "--loss-function", choices=("focal", "dice-ce"), default="dice-ce"
-    )
     parser.add_argument("--ce-loss-weight", type=nonnegative_float, default=1.0)
     parser.add_argument("--dice-loss-weight", type=nonnegative_float, default=1.0)
     parser.add_argument(
@@ -140,6 +166,16 @@ def build_parser():
     parser.add_argument("--n-class", type=int, default=2)
     parser.add_argument("--num_workers", type=int, default=2)
     parser.add_argument("--dropout-rate", type=float, default=0.10)
+    parser.add_argument(
+        "--initial-weights",
+        type=optional_path,
+        help="Tensor-only state dictionary used to initialize a new training cycle",
+    )
+    parser.add_argument(
+        "--parent-metadata",
+        type=optional_path,
+        help="JSON metadata emitted with --initial-weights by nidavellir_tools/model_package_registry.py",
+    )
     parser.add_argument(
         "--patch-size",
         default="32,128,128",
@@ -187,6 +223,7 @@ def build_parser():
 def main():
     args = build_parser().parse_args()
     params = vars(args)
+    validate_parent_initialization(args.initial_weights, args.parent_metadata)
     MLFCore.set_general_random_seeds(args.general_seed)
     MLFCore.set_pytorch_random_seeds(args.pytorch_seed)
     mlflow.pytorch.autolog()
@@ -202,6 +239,9 @@ def main():
     )
     MLFCore.log_input_data(args.dataset_path)
     model = NumorphSegmentator(**params)
+    if args.parent_metadata:
+        parent_metadata = Path(args.parent_metadata)
+        mlflow.log_artifact(str(parent_metadata), artifact_path="parent-model")
     output = Path(
         "/mlruns" if "MLF_CORE_DOCKER_RUN" in os.environ else "lightning_logs"
     )
