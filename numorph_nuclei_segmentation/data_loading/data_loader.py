@@ -44,6 +44,8 @@ _SOURCE_COLUMNS = (
     "source",
 )
 
+DEFAULT_TARGET_VOXEL_SIZE_UM = (3.0, 1.0, 1.0)
+
 NUMORPH_DATASET_URL = "https://drive.google.com/file/d/1nwLPXoWEsBb3wLNwXHY3L23UiO-5IIyn/view?usp=drive_link"
 
 
@@ -144,6 +146,14 @@ class VolumePair:
     annotation: Path
     split: str | None = None
     group: str | None = None
+
+
+@dataclass(frozen=True)
+class OMEVolume:
+    """An array and its OME physical voxel size, expressed as Z,Y,X in µm."""
+
+    array: np.ndarray
+    voxel_size_um: tuple[float, float, float]
 
 
 def _normalise_key(key: str) -> str:
@@ -284,8 +294,8 @@ _UNIT_TO_UM = {
 }
 
 
-def _physical_spacing(ome_xml: str | None, path: Path) -> tuple[float, float, float]:
-    """Read OME physical sizes and return micrometres/voxel in Z,Y,X order."""
+def _read_voxel_size_um(ome_xml: str | None, path: Path) -> tuple[float, float, float]:
+    """Return OME ``PhysicalSizeZ/Y/X`` values as µm per voxel."""
     try:
         pixels = next(
             element
@@ -307,13 +317,14 @@ def _physical_spacing(ome_xml: str | None, path: Path) -> tuple[float, float, fl
         ) from error
 
 
-def _read_ome(path: Path, *, mask: bool, return_spacing: bool = False):
+def _read_ome(path: Path, *, mask: bool) -> OMEVolume:
+    """Read the first OME-TIFF series in canonical CZYX or ZYX order."""
     with tifffile.TiffFile(path) as tif:
         if not tif.is_ome:
             raise ValueError(f"Expected OME-TIFF metadata in {path}")
         array = tif.series[0].asarray()
         axes = tif.series[0].axes.upper()
-        spacing = _physical_spacing(tif.ome_metadata, path)
+        voxel_size_um = _read_voxel_size_um(tif.ome_metadata, path)
     for axis in "ST":
         if axis in axes:
             index = axes.index(axis)
@@ -338,7 +349,7 @@ def _read_ome(path: Path, *, mask: bool, return_spacing: bool = False):
     if set(axes) != set(wanted) or len(axes) != len(wanted):
         raise ValueError(f"Unsupported axes {axes!r} in {path}; expected {wanted}")
     array = np.transpose(array, tuple(axes.index(axis) for axis in wanted))
-    return (array, spacing) if return_spacing else array
+    return OMEVolume(array=array, voxel_size_um=voxel_size_um)
 
 
 def _gaussian_blur_for_downsampling(
@@ -395,26 +406,31 @@ def _component_centroids(mask: np.ndarray) -> list[np.ndarray]:
 
 
 def resample_volume_pair(
-    image: np.ndarray, label: np.ndarray, source_spacing, target_spacing
+    image: np.ndarray,
+    label: np.ndarray,
+    source_voxel_size_um,
+    target_voxel_size_um,
 ):
-    """Resample a CZYX/ZYX pair and preserve each in-bounds marker component."""
-    source = np.asarray(source_spacing, dtype=np.float64)
-    target = np.asarray(target_spacing, dtype=np.float64)
+    """Place a CZYX/ZYX pair on the requested physical voxel-size grid."""
+    source_size = np.asarray(source_voxel_size_um, dtype=np.float64)
+    target_size = np.asarray(target_voxel_size_um, dtype=np.float64)
     if (
-        source.shape != (3,)
-        or target.shape != (3,)
-        or np.any(source <= 0)
-        or np.any(target <= 0)
+        source_size.shape != (3,)
+        or target_size.shape != (3,)
+        or np.any(source_size <= 0)
+        or np.any(target_size <= 0)
     ):
         raise ValueError(
-            "source and target spacing must be three positive values in Z,Y,X order"
+            "source and target voxel sizes must be three positive µm values in Z,Y,X order"
         )
-    scale = source / target
+    # Preserve the physical extent: a smaller requested voxel needs more voxels.
+    resize_factors = source_size / target_size
     output_shape = tuple(
-        max(1, int(round(size * factor))) for size, factor in zip(label.shape, scale)
+        max(1, int(round(length * factor)))
+        for length, factor in zip(label.shape, resize_factors)
     )
     image_tensor = torch.from_numpy(np.ascontiguousarray(image)).float()[None]
-    image_tensor = _gaussian_blur_for_downsampling(image_tensor, tuple(scale))
+    image_tensor = _gaussian_blur_for_downsampling(image_tensor, tuple(resize_factors))
     resized_image = F.interpolate(
         image_tensor, size=output_shape, mode="trilinear", align_corners=False
     )[0]
@@ -425,7 +441,7 @@ def resample_volume_pair(
     )[0, 0].to(torch.int64)
     # Voxel-centre coordinates map as (p + .5) * source / target - .5.
     for centroid in _component_centroids(label):
-        transformed = np.rint((centroid + 0.5) * scale - 0.5).astype(int)
+        transformed = np.rint((centroid + 0.5) * resize_factors - 0.5).astype(int)
         if np.all(transformed >= 0) and np.all(transformed < np.asarray(output_shape)):
             resized_label[tuple(transformed)] = 1
     return resized_image.numpy(), resized_label.numpy()
@@ -544,8 +560,14 @@ class VolumeDataset(Dataset):
         foreground_probability=0.0,
         random_rotation_degrees=0.0,
         random_rotation_90_probability=0.0,
-        target_spacing=(3.0, 1.0, 1.0),
+        target_voxel_size_um=DEFAULT_TARGET_VOXEL_SIZE_UM,
+        target_spacing=None,
     ):
+        # ``target_spacing`` was the original public keyword. Keep it as a
+        # compatibility alias while using OME's physical-size terminology in
+        # the implementation and documentation.
+        if target_spacing is not None:
+            target_voxel_size_um = target_spacing
         self.pairs = list(pairs)
         self.patch_size = tuple(patch_size) if patch_size else None
         self.random_crop = random_crop
@@ -555,7 +577,7 @@ class VolumeDataset(Dataset):
         self.foreground_probability = foreground_probability
         self.random_rotation_degrees = float(random_rotation_degrees)
         self.random_rotation_90_probability = float(random_rotation_90_probability)
-        self.target_spacing = tuple(target_spacing)
+        self.target_voxel_size_um = tuple(target_voxel_size_um)
         self._volume_cache = {}
 
     def __len__(self):
@@ -564,15 +586,13 @@ class VolumeDataset(Dataset):
     def __getitem__(self, idx):
         pair = self.pairs[idx % len(self.pairs)]
         if pair.image_id not in self._volume_cache:
-            image, image_spacing = _read_ome(
-                pair.image, mask=False, return_spacing=True
-            )
-            label, mask_spacing = _read_ome(
-                pair.annotation, mask=True, return_spacing=True
-            )
-            if not np.allclose(image_spacing, mask_spacing):
+            image_volume = _read_ome(pair.image, mask=False)
+            mask_volume = _read_ome(pair.annotation, mask=True)
+            image, label = image_volume.array, mask_volume.array
+            if not np.allclose(image_volume.voxel_size_um, mask_volume.voxel_size_um):
                 raise ValueError(
-                    f"Image and mask physical spacing differ for {pair.image_id}: {image_spacing} != {mask_spacing}"
+                    f"Image and mask OME physical voxel sizes differ for {pair.image_id}: "
+                    f"{image_volume.voxel_size_um} != {mask_volume.voxel_size_um} µm"
                 )
             if image.shape[1:] != label.shape:
                 raise ValueError(
@@ -592,8 +612,8 @@ class VolumeDataset(Dataset):
             image, label = resample_volume_pair(
                 image.astype(np.float32, copy=False),
                 label,
-                image_spacing,
-                self.target_spacing,
+                image_volume.voxel_size_um,
+                self.target_voxel_size_um,
             )
             self._volume_cache[pair.image_id] = image, label
         image, label = self._volume_cache[pair.image_id]
@@ -712,24 +732,28 @@ class NumorphDataModule(pl.LightningDataModule):
         rotation_90_probability = self.args.get("random_rotation_90_probability", 0.5)
         if not 0 <= rotation_90_probability <= 1:
             raise ValueError("random-rotation-90-probability must be between 0 and 1")
-        spacing_value = self.args.get("target_voxel_spacing", "3.0,1.0,1.0")
-        spacing = tuple(
+        voxel_size_value = self.args.get(
+            "target_voxel_spacing", DEFAULT_TARGET_VOXEL_SIZE_UM
+        )
+        target_voxel_size_um = tuple(
             float(value)
             for value in (
-                spacing_value.split(",")
-                if isinstance(spacing_value, str)
-                else spacing_value
+                voxel_size_value.split(",")
+                if isinstance(voxel_size_value, str)
+                else voxel_size_value
             )
         )
-        if len(spacing) != 3 or any(value <= 0 for value in spacing):
+        if len(target_voxel_size_um) != 3 or any(
+            value <= 0 for value in target_voxel_size_um
+        ):
             raise ValueError(
-                "target-voxel-spacing must be three positive values in Z,Y,X order"
+                "target-voxel-spacing must be three positive physical voxel sizes in Z,Y,X order"
             )
         common = {
             "patch_size": patch,
             "normalize": self.args["normalize_input"],
             "classes": self.args["n_class"],
-            "target_spacing": spacing,
+            "target_voxel_size_um": target_voxel_size_um,
         }
         self.train_dataset = VolumeDataset(
             train,
