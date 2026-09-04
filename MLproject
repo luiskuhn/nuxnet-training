@@ -31,6 +31,7 @@ entry_points:
       min-lr: {type: float, default: 0.000001}
       training-batch-size: {type: int, default: 1}
       test-batch-size: {type: int, default: 1}
+      inference-overlap: {type: float, default: 0.5}
       class-weights: {type: string, default: '1.0,1.0'}
       ce-loss-weight: {type: float, default: 1.0}
       dice-loss-weight: {type: float, default: 1.0}
@@ -68,6 +69,7 @@ entry_points:
             --min-lr {min-lr} \
             --training-batch-size {training-batch-size} \
             --test-batch-size {test-batch-size} \
+            --inference-overlap {inference-overlap} \
             --class-weights {class-weights} \
             --ce-loss-weight {ce-loss-weight} \
             --dice-loss-weight {dice-loss-weight} \

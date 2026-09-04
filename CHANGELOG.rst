@@ -9,6 +9,10 @@ Unreleased
 
 **Added**
 
+* Select checkpoints and schedule learning rate from foreground validation IoU.
+* Aggregate IoU and accuracy from epoch-level, DDP-reduced confusion counts.
+* Evaluate complete held-out volumes with deterministic sliding-window inference.
+
 * A domain-independent model registry tool for verified staging from local,
   HTTP, MLflow, or Hugging Face sources, PyTorch loading, BioImage.IO validation,
   and complete-package Hugging Face publication.
