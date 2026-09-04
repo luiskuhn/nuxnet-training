@@ -337,13 +337,14 @@ def test_training_augmentation_defaults_to_requested_patch_and_rotation():
     assert args.random_rotation_degrees == 10.0
     assert args.random_rotation_90_probability == 0.5
     assert args.target_voxel_spacing == (3.0, 1.0, 1.0)
+    assert args.inference_overlap == 0.0
     assert args.cross_validation_folds == 5
     assert args.validation_fold == 0
     assert args.dropout_rate == 0.10
 
 
 def test_volume_dataloader_workers_are_released_at_epoch_boundaries():
-    """Worker-local full-volume caches must not survive between epochs."""
+    """Workers are released and safely spawned after CUDA initialization."""
     args = vars(build_parser().parse_args(["--num_workers", "2"]))
     data = NumorphDataModule(**args)
     sample = torch.zeros(1, 1, 4, 4, 4)
@@ -351,9 +352,28 @@ def test_volume_dataloader_workers_are_released_at_epoch_boundaries():
     data.train_dataset = torch.utils.data.TensorDataset(sample, target)
     data.test_dataset = torch.utils.data.TensorDataset(sample, target)
 
-    assert data.train_dataloader().persistent_workers is False
-    assert data.val_dataloader().persistent_workers is False
-    assert data.test_dataloader().persistent_workers is False
+    loaders = (
+        data.train_dataloader(),
+        data.val_dataloader(),
+        data.test_dataloader(),
+    )
+    assert all(loader.persistent_workers is False for loader in loaders)
+    assert all(
+        loader.multiprocessing_context.get_start_method() == "spawn"
+        for loader in loaders
+    )
+
+
+def test_single_process_dataloaders_do_not_set_a_multiprocessing_context():
+    args = vars(build_parser().parse_args(["--num_workers", "0"]))
+    data = NumorphDataModule(**args)
+    sample = torch.zeros(1, 1, 4, 4, 4)
+    target = torch.zeros(1, 4, 4, 4, dtype=torch.long)
+    data.train_dataset = torch.utils.data.TensorDataset(sample, target)
+    data.test_dataset = torch.utils.data.TensorDataset(sample, target)
+
+    assert data.train_dataloader().multiprocessing_context is None
+    assert data.val_dataloader().multiprocessing_context is None
 
 
 def test_cross_validation_uses_seeded_random_fold_and_all_samples():

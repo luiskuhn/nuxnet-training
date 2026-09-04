@@ -10,6 +10,16 @@ class PointwisePredictor(torch.nn.Module):
         return torch.cat((-image, image), dim=1)
 
 
+class CountingPredictor(PointwisePredictor):
+    def __init__(self):
+        super().__init__()
+        self.windows = 0
+
+    def forward(self, image):
+        self.windows += image.shape[0]
+        return super().forward(image)
+
+
 @pytest.mark.parametrize("shape", [(8, 12, 12), (3, 5, 6), (7, 11, 13)])
 def test_sliding_window_preserves_shape_is_deterministic_and_covers_all_voxels(shape):
     image = torch.arange(torch.tensor(shape).prod(), dtype=torch.float32).reshape(
@@ -31,6 +41,16 @@ def test_one_window_is_equivalent_to_direct_inference():
         sliding_window_inference(image, predictor, (4, 8, 8), 0.75, 2),
         predictor(image),
     )
+
+
+def test_default_uses_minimum_complete_window_coverage():
+    image = torch.randn(1, 1, 8, 16, 16)
+    predictor = CountingPredictor()
+
+    result = sliding_window_inference(image, predictor, (4, 8, 8), batch_size=3)
+
+    assert predictor.windows == 8
+    assert torch.equal(result, torch.cat((-image, image), dim=1))
 
 
 def test_signal_outside_the_old_center_patch_contributes_to_counts():

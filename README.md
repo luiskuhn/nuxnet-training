@@ -110,7 +110,7 @@ Reproducibility and execution options:
 | `--log-interval` | `100` | Training steps between log writes. |
 | `--n-channels`, `--n-class` | `1`, `2` | Input channels and output classes. Defaults match NuMorph and inference. |
 | `--test-batch-size` | `1` | Number of sliding inference windows processed simultaneously during validation/test. |
-| `--inference-overlap` | `0.5` | Sliding-window overlap fraction in `[0,1)` for validation/test. |
+| `--inference-overlap` | `0.0` | Sliding-window overlap fraction in `[0,1)` for validation/test. Non-overlapping windows cover every voxel with the least computation; increase this only when reducing tile-edge seams is worth the additional 3-D inference work. A `0.5` overlap evaluates roughly eight times as many interior windows. |
 | `--max-training-volumes`, `--max-validation-volumes` | unset | Limit volumes after splitting for smoke tests only. |
 
 Dataset options are `--dataset-path`, `--download-dataset`, `--dataset-url`, and `--overwrite-dataset`. Run `docker run --rm nuxnet-training --help` (or the Python command below with `--help`) for the authoritative complete CLI.

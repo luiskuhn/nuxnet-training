@@ -37,6 +37,11 @@ Unreleased
 
 **Fixed**
 
+* Prevented multi-GPU training from hanging between epochs by spawning data
+  loader workers instead of forking them after CUDA initialization.
+* Removed redundant validation/test inference work by making complete,
+  non-overlapping sliding-window coverage the default. Overlap remains
+  configurable when tile-edge blending is required.
 * Aligned CI, documentation, and container workflows with the supported
   Python 3.12 environment and pinned dependencies.
 * Made the container command overridable by MLflow and added dependency smoke
