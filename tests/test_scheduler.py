@@ -10,7 +10,7 @@ from numorph_nuclei_segmentation.numorph_nuclei_segmentation import (
 from numorph_nuclei_segmentation.model.model import NumorphSegmentator
 
 
-def test_plateau_scheduler_uses_configurable_training_loss_strategy():
+def test_plateau_scheduler_uses_configurable_validation_iou_strategy():
     args = vars(build_parser().parse_args([]))
     model = NumorphSegmentator(**args)
 
@@ -19,8 +19,8 @@ def test_plateau_scheduler_uses_configurable_training_loss_strategy():
     scheduler = scheduler_config["scheduler"]
 
     assert isinstance(configuration["optimizer"], torch.optim.Adam)
-    assert scheduler_config["monitor"] == "train_avg_loss"
-    assert scheduler.mode == "min"
+    assert scheduler_config["monitor"] == "val_iou_1"
+    assert scheduler.mode == "max"
     assert scheduler.factor == pytest.approx(0.5)
     assert scheduler.patience == 5
     assert scheduler.threshold == pytest.approx(1e-5)
@@ -48,7 +48,9 @@ def test_parent_weights_and_metadata_are_cryptographically_paired(tmp_path):
     weights.write_bytes(b"parent weights")
     metadata = tmp_path / "parent.json"
     metadata.write_text(
-        json.dumps({"weights_sha256": hashlib.sha256(weights.read_bytes()).hexdigest()}),
+        json.dumps(
+            {"weights_sha256": hashlib.sha256(weights.read_bytes()).hexdigest()}
+        ),
         encoding="utf-8",
     )
 

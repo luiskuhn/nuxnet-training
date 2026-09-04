@@ -10,7 +10,7 @@ Reproducible 3D U-Net training for nucleus-marker detection in NuMorph light-she
 
 The model is a compact residual 3D U-Net with 32-, 64-, and 128-channel feature levels. Two stride-2 convolutions form the encoder, and two nearest-neighbor upsampling stages restore the original resolution while reusing encoder features through skip connections. Every two-convolution block has a residual shortcut (a normalized 1×1×1 projection when channels change), and the final 1×1×1 head emits two-channel background/marker logits. Spatial dropout acts only on learned feature maps, never directly on the raw input.
 
-Training uses unweighted cross-entropy plus foreground soft Dice, Adam, validation-loss checkpointing and reports loss, voxel accuracy, per-class IoU and mean IoU. Because the foreground is sparse, prefer nucleus-class and mean IoU over accuracy when comparing runs. The architecture remains below 2.5 million parameters and retains the compact model's memory profile.
+Training uses unweighted cross-entropy plus foreground soft Dice and Adam. Checkpoints and learning-rate scheduling use foreground validation IoU, while reporting loss, voxel accuracy, per-class IoU and mean IoU. Because the foreground is sparse, prefer nucleus-class and mean IoU over accuracy when comparing runs. The architecture remains below 2.5 million parameters and retains the compact model's memory profile.
 
 The default `NUMORPH_SEM_SEG_DATASET` contains 32 paired OME-TIFF image/mask volumes: 16 at 0.75 × 0.75 × 2.5 µm and 16 at 1.21 × 1.21 × 4.0 µm. Images are normalized, single-channel `float32`; masks are binary `uint8`.
 
@@ -79,10 +79,10 @@ These options have the greatest effect on training quality, runtime, and memory:
 | --- | --- | ---: | --- |
 | Epochs | `--max_epochs` | `1000` | Maximum training epochs. |
 | Learning rate | `--lr` | `0.0001` | Initial Adam learning rate. |
-| LR reduction factor | `--lr-scheduler-factor` | `0.5` | Multiply the learning rate by this factor when training loss plateaus. |
-| LR scheduler patience | `--lr-scheduler-patience` | `5` | Number of stagnant training-loss epochs tolerated before reducing the rate. |
-| LR improvement threshold | `--lr-scheduler-threshold` | `1e-5` | Minimum absolute training-loss improvement that resets scheduler patience. |
-| LR scheduler cooldown | `--lr-scheduler-cooldown` | `2` | Epochs to wait after a rate reduction before resuming plateau checks. |
+| LR reduction factor | `--lr-scheduler-factor` | `0.5` | Multiply the learning rate by this factor when foreground validation IoU plateaus. |
+| LR scheduler patience | `--lr-scheduler-patience` | `5` | Validation evaluations without sufficient improvement tolerated before reducing the rate. With validation every 5 epochs, patience 6 reduces after roughly 35 stagnant epochs because PyTorch reduces after the seventh non-improving evaluation. |
+| LR improvement threshold | `--lr-scheduler-threshold` | `1e-5` | Minimum absolute improvement in foreground validation IoU that resets scheduler patience. |
+| LR scheduler cooldown | `--lr-scheduler-cooldown` | `2` | Validation evaluations to wait after a rate reduction before resuming plateau checks. |
 | Minimum learning rate | `--min-lr` | `1e-6` | Lower bound for learning-rate reductions. |
 | Patch size | `--patch-size Z,Y,X` | `32,128,128` | Spatial context per sample. Each dimension must be divisible by four; larger patches require more memory. |
 | Target physical voxel size | `--target-voxel-spacing Z,Y,X` | `3.0,1.0,1.0` | OME-style physical size of one output voxel in Z,Y,X order, in µm per voxel. |
@@ -109,7 +109,8 @@ Reproducibility and execution options:
 | `--num_workers` | `2` | Data-loader workers. Increase when input loading limits throughput. |
 | `--log-interval` | `100` | Training steps between log writes. |
 | `--n-channels`, `--n-class` | `1`, `2` | Input channels and output classes. Defaults match NuMorph and inference. |
-| `--test-batch-size` | `1` | Validation/test batch size. |
+| `--test-batch-size` | `1` | Number of sliding inference windows processed simultaneously during validation/test. |
+| `--inference-overlap` | `0.5` | Sliding-window overlap fraction in `[0,1)` for validation/test. |
 | `--max-training-volumes`, `--max-validation-volumes` | unset | Limit volumes after splitting for smoke tests only. |
 
 Dataset options are `--dataset-path`, `--download-dataset`, `--dataset-url`, and `--overwrite-dataset`. Run `docker run --rm nuxnet-training --help` (or the Python command below with `--help`) for the authoritative complete CLI.
@@ -199,7 +200,9 @@ Paths are relative to the dataset root and every image must have exactly one mas
 
 All records participate in a shuffled, group-stratified split. The held-out fold supplies both validation data during fitting and final test metrics; a run fits **one model**, not one model per fold. The resolved fold is printed and logged to MLflow as `selected_validation_fold`.
 
-The [physical voxel-size resampling](#resampling-to-a-common-physical-voxel-size) is applied before patch selection. Training then adds random crops and foreground-aware sampling; validation/test use centered crops and no random augmentation. Smaller normalized volumes are zero padded.
+The [physical voxel-size resampling](#resampling-to-a-common-physical-voxel-size) is applied before patch selection. Training then adds random crops and foreground-aware sampling. Validation/test apply deterministic overlapping sliding-window inference to every voxel of each complete resampled volume, with no random augmentation; smaller volumes are padded and predictions are cropped back to their original shape. Raw logits are uniformly averaged in overlaps before argmax.
+
+IoU and voxel accuracy are calculated once per epoch from globally reduced confusion counts rather than averages of batch scores. A class absent from both prediction and target has zero union and is assigned IoU 0; mean IoU always averages all configured classes.
 
 ## Other ways to run
 

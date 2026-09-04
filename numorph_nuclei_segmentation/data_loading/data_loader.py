@@ -726,6 +726,9 @@ class NumorphDataModule(pl.LightningDataModule):
             raise ValueError("patches-per-volume must be at least 1")
         if not 0.0 <= self.args["foreground_patch_probability"] <= 1.0:
             raise ValueError("foreground-patch-probability must be between 0 and 1")
+        inference_overlap = self.args.get("inference_overlap", 0.5)
+        if not 0 <= inference_overlap < 1:
+            raise ValueError("inference-overlap must be in [0, 1)")
         rotation_degrees = self.args.get("random_rotation_degrees", 2.0)
         if rotation_degrees < 0:
             raise ValueError("random-rotation-degrees must be non-negative")
@@ -764,7 +767,17 @@ class NumorphDataModule(pl.LightningDataModule):
             random_rotation_90_probability=rotation_90_probability,
             **common,
         )
-        self.test_dataset = VolumeDataset(test, random_crop=False, **common)
+        # Held-out samples retain their complete resampled spatial extent.
+        # Window extraction happens in the model so differently sized volumes
+        # are never cropped merely to make a DataLoader batch rectangular.
+        self.test_dataset = VolumeDataset(
+            test,
+            patch_size=None,
+            normalize=common["normalize"],
+            classes=common["classes"],
+            target_voxel_size_um=common["target_voxel_size_um"],
+            random_crop=False,
+        )
 
     def train_dataloader(self):
         return DataLoader(
@@ -778,7 +791,10 @@ class NumorphDataModule(pl.LightningDataModule):
     def test_dataloader(self):
         return DataLoader(
             self.test_dataset,
-            batch_size=self.args["test_batch_size"],
+            # --test-batch-size controls the bounded window batches inside
+            # sliding-window inference. One complete (variable-size) volume is
+            # emitted here at a time.
+            batch_size=1,
             num_workers=self.args["num_workers"],
             shuffle=False,
             persistent_workers=self.args["num_workers"] > 0,
