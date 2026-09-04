@@ -43,6 +43,8 @@ entry_points:
       n-class: {type: int, default: 2}
       num_workers: {type: int, default: 24}
       dropout-rate: {type: float, default: 0.10}
+      initial-weights: {type: string, default: 'none'}
+      parent-metadata: {type: string, default: 'none'}
       patch-size: {type: string, default: '32,128,128'}
       target-voxel-spacing: {type: string, default: '3.0,1.0,1.0'}
       normalize-input: {type: string, default: '--normalize-input'}
@@ -79,6 +81,8 @@ entry_points:
             --n-class {n-class} \
             --num_workers {num_workers} \
             --dropout-rate {dropout-rate} \
+            --initial-weights {initial-weights} \
+            --parent-metadata {parent-metadata} \
             --patch-size {patch-size} \
             --target-voxel-spacing {target-voxel-spacing} \
             --patches-per-volume {patches-per-volume} \

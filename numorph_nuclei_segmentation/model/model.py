@@ -20,6 +20,10 @@ class NumorphSegmentator(pl.LightningModule):
             classes=kwargs["n_class"],
             dropout=kwargs["dropout_rate"],
         )
+        initial_weights = kwargs.get("initial_weights")
+        if initial_weights:
+            state = torch.load(initial_weights, map_location="cpu", weights_only=True)
+            self.model.load_state_dict(state, strict=True)
         weights = np.asarray(
             [
                 float(value)

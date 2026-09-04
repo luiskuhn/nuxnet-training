@@ -8,6 +8,7 @@ Welcome to numorph-nuclei-segmentation's documentation!
    
    usage
    model
+   fair_model_packages
    authors
    changelog
    code_of_conduct

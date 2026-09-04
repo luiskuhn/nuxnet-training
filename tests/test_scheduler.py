@@ -1,7 +1,12 @@
 import pytest
 import torch
+import json
+import hashlib
 
-from numorph_nuclei_segmentation.numorph_nuclei_segmentation import build_parser
+from numorph_nuclei_segmentation.numorph_nuclei_segmentation import (
+    build_parser,
+    validate_parent_initialization,
+)
 from numorph_nuclei_segmentation.model.model import NumorphSegmentator
 
 
@@ -22,3 +27,33 @@ def test_plateau_scheduler_uses_configurable_training_loss_strategy():
     assert scheduler.threshold_mode == "abs"
     assert scheduler.cooldown == 2
     assert scheduler.min_lrs == pytest.approx([1e-6])
+
+
+def test_parent_weights_initialize_a_new_training_cycle(tmp_path):
+    args = vars(build_parser().parse_args([]))
+    source = NumorphSegmentator(**args)
+    with torch.no_grad():
+        source.model.outc.conv_1.weight.fill_(2.5)
+    weights = tmp_path / "parent.pt"
+    torch.save(source.model.state_dict(), weights)
+
+    args["initial_weights"] = str(weights)
+    child = NumorphSegmentator(**args)
+
+    assert torch.equal(child.model.outc.conv_1.weight, source.model.outc.conv_1.weight)
+
+
+def test_parent_weights_and_metadata_are_cryptographically_paired(tmp_path):
+    weights = tmp_path / "parent.pt"
+    weights.write_bytes(b"parent weights")
+    metadata = tmp_path / "parent.json"
+    metadata.write_text(
+        json.dumps({"weights_sha256": hashlib.sha256(weights.read_bytes()).hexdigest()}),
+        encoding="utf-8",
+    )
+
+    validate_parent_initialization(str(weights), str(metadata))
+    weights.write_bytes(b"different weights")
+
+    with pytest.raises(ValueError, match="do not match"):
+        validate_parent_initialization(str(weights), str(metadata))

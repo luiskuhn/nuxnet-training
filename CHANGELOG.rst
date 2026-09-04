@@ -9,6 +9,21 @@ Unreleased
 
 **Added**
 
+* A domain-independent model registry tool for verified staging from local,
+  HTTP, MLflow, or Hugging Face sources, PyTorch loading, BioImage.IO validation,
+  and complete-package Hugging Face publication.
+* A review of the NuxNet exporter boundary, proposed reusable FAIR package
+  architecture, and operational acceptance checklist.
+* Symmetric parent-model loading and child export, including metadata sidecars,
+  strict transfer-learning initialization, refreshed test evidence/model cards,
+  and explicit parent lineage across repeated training cycles.
+* Move the package builder and lifecycle registry into ``nidavellir_tools``;
+  make initial package construction declarative and independent of NuxNet,
+  microscopy, tensor dimensionality, and vision task semantics.
+* Add a README quick start with setup, build, inspect, checksum, staging, loading,
+  validation, publication, and local/HTTP/Hugging Face/MLflow source examples.
+* Add an annotated, domain-neutral model-package specification under
+  ``nidavellir_tools/examples`` while retaining the root NuxNet profile separately.
 * Atomic public dataset downloads, including direct support for the NuMorph
   Google Drive share link.
 * Reviewed dataset documentation covering its biological source, resolution

@@ -16,6 +16,8 @@ def test_mlproject_exposes_and_forwards_anisotropic_training_parameters():
         "ce-loss-weight": 1.0,
         "dice-loss-weight": 1.0,
         "class-weights": "1.0,1.0",
+        "initial-weights": "none",
+        "parent-metadata": "none",
     }
 
     for name, default in expected_defaults.items():
