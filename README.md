@@ -250,140 +250,244 @@ With Docker, mount both directories and run the same tool at `/app/tools/export_
 
 The state dictionary contains the plain `UNet3D` weights expected by `nuxnet-inference`; use its `--classes 2` option. Dependencies are pinned to Python 3.12, PyTorch 2.5.1, NumPy 1.26.4 and tifffile 2024.8.30. This project is released under the MIT license.
 
-## FAIR model export
+## FAIR model packaging, registries, and transfer learning
 
-`tools/export_model.py` turns one trained checkpoint into two deliverables:
+The reusable commands live in [`nidavellir_tools/`](nidavellir_tools/):
 
-1. an unpacked model repository at `--output-dir`, intended for review and upload to Hugging Face; and
-2. a sibling ZIP archive, intended for validation and upload to BioImage.IO.
+| Command | Responsibility |
+| --- | --- |
+| `build_model_package.py` | Build a new FAIR package from a declarative BioImage.IO RDF specification, a PyTorch checkpoint, test tensors, a model card, and optional provenance. |
+| `model_package_registry.py` | Stage, verify, inspect, load, derive, validate, and publish an existing package. |
 
-The tool requires the project's Python environment because it loads the checkpoint and performs a real CPU inference and TorchScript trace. Create the pinned Conda environment first, or use the project image:
+Neither command imports NuxNet or assumes microscopy, segmentation, dimensionality,
+axis order, channel names, preprocessing, or postprocessing. A project supplies
+those truthful details in its RDF specification and model card. The tools require
+PyTorch and PyYAML; NumPy is needed for TorchScript tracing. MLflow,
+`huggingface_hub`, and `bioimageio.core` are only needed for their respective
+remote or validation operations.
 
-```bash
-conda env create -f environment.yml
-conda activate nuxnet-training
-python tools/export_model.py --help
-```
+For adoption in another repository, start from
+[`nidavellir_tools/examples/model-package.example.yaml`](nidavellir_tools/examples/model-package.example.yaml).
+It is an annotated structural reference, not a publication-ready specification;
+copy it into the consuming project and replace every example value. The root
+[`model-package.yaml`](model-package.yaml) is intentionally separate: it is this
+repository's concrete NuxNet profile, while the file under `nidavellir_tools`
+documents the portable contract.
 
-The `--checkpoint` input may be either the plain `numorph_unet3d.pt` written at the end of training or the best `.ckpt` file under `checkpoints/`. The exporter recognizes Lightning's `state_dict`, removes its `model.` prefix, and strictly loads all tensors into `UNet3D`; incompatible channels, classes, dropout-independent architecture keys, missing tensors, or unexpected tensors stop the export.
+### How to run the tools: quick start
 
-### Export a model
+Run both commands from the repository root so relative paths in the RDF
+specification resolve consistently.
 
-Supply publication-specific metadata rather than copying the placeholders below:
+1. Create the project environment and inspect the available commands:
 
-```bash
-python tools/export_model.py \
-  --checkpoint mlruns/numorph_unet3d.pt \
-  --output-dir output/nuxnet-model \
-  --name "NuMorph nucleus-marker U-Net" \
-  --description "3D U-Net for nucleus-marker detection in cleared mouse-brain microscopy" \
-  --author "Your Name" --author-orcid 0000-0000-0000-0000 \
-  --github-user YOUR_GITHUB_USERNAME --model-version 1.0.0 \
-  --citation "Authors (year), title" --doi 10.example/article \
-  --dataset "persistent dataset identifier" --dataset-version "1" \
-  --mlflow-run-id YOUR_RUN_ID
-```
+   ```bash
+   conda env create -f environment.yml
+   conda activate numorph-nuclei-segmentation
 
-`--doi` and `--citation-url` are alternatives; at least one is required so the citation is resolvable. `--source-repository` and `--git-commit` override the current Git checkout when exporting a model trained elsewhere. `--cover` replaces the default graphical abstract with a representative GIF, JPEG, PNG, or SVG. `--test-shape Z,Y,X` controls the small technical test volume and defaults to `4,16,16`; all dimensions must be at least four and divisible by four.
+   python nidavellir_tools/build_model_package.py --help
+   python nidavellir_tools/model_package_registry.py --help
+   python nidavellir_tools/model_package_registry.py load --help
+   ```
 
-The architecture options must match the training run: `--input-channels 1`, `--classes 2`, and `--dropout 0.10` are the defaults. Input normalization is enabled by default, matching normal NuxNet training. Pass `--no-normalize-input` only if that checkpoint was trained with `--no-normalize-input`; the choice is reflected in the test tensors, RDF preprocessing, model card, and provenance. Existing non-empty output directories are protected unless `--overwrite` is supplied.
+   Local building and loading use the dependencies already listed in
+   `environment.yml`. Install only the integrations you intend to use:
 
-The equivalent Docker invocation is:
+   ```bash
+   # BioImage.IO validation
+   python -m pip install bioimageio.core
 
-```bash
-docker run --rm \
-  -v "$PWD/mlruns:/mlruns:ro" -v "$PWD/output:/output" \
-  --entrypoint python nuxnet-training \
-  /app/tools/export_model.py \
-  --checkpoint /mlruns/numorph_unet3d.pt \
-  --output-dir /output/nuxnet-model \
-  --name "NuMorph nucleus-marker U-Net" \
-  --description "3D U-Net for nucleus-marker detection" \
-  --author "Your Name" --github-user YOUR_GITHUB_USERNAME \
-  --citation "Authors (year), title" --doi 10.example/article \
-  --dataset "persistent dataset identifier" --dataset-version "1"
-```
+   # Hugging Face download/upload
+   python -m pip install huggingface_hub
+   hf auth login
+   ```
 
-During export, the tool loads and strictly checks the weights, creates deterministic raw test data, applies the configured normalization, runs the model, computes expected post-softmax probabilities, traces TorchScript, writes metadata and checksums, and finally creates the ZIP. `test-input.npy` and `test-output.npy` are technical reproducibility fixtures; they are not evaluation data and do not establish scientific model quality.
+2. Prepare these run-specific inputs before building:
 
-### Exactly what is produced
+   * a PyTorch state dictionary or Lightning checkpoint;
+   * raw BioImage.IO test input arrays in `.npy` format;
+   * expected `.npy` outputs produced by the exported weights and the RDF's
+     declared processing;
+   * a completed Hugging Face-compatible `README.md` model card; and
+   * optionally, a JSON provenance record and a model-ready `.npy` tracing input.
 
-| File | BioImage.IO role | Hugging Face role |
-| --- | --- | --- |
-| `rdf.yaml` | Required 0.5.14 resource description: identity, authors/maintainer, citation, cover, tensor axes, preprocessing, postprocessing, test tensors, weights, dependencies, and hashes. | Supplementary machine-readable interoperability metadata. |
-| `model.ts` | Portable TorchScript weights referenced by the RDF; the network returns logits. | Ready-to-download TorchScript representation. |
-| `weights.pt` | Alternative tensor-only PyTorch state dictionary referenced by the RDF. | Native PyTorch weights for downstream loading and fine-tuning. |
-| `unet_3d_models.py` | Exact callable architecture needed to reconstruct `weights.pt`. | Human-readable/loading implementation. |
-| `test-input.npy` | Deterministic raw `BCZYX` input used by `bioimageio test`. | Reproducibility fixture. |
-| `test-output.npy` | Expected probability tensor after RDF min/max preprocessing, model execution, and softmax postprocessing. | Reproducibility fixture. |
-| `cover.png` | Required representative cover; defaults to the project graphical abstract and may be replaced with `--cover`. | Visual repository asset. |
-| `README.md` | BioImage.IO model documentation with a Validation section. | Hugging Face model card with Hub YAML front matter. |
-| `environment.yml` | Pinned state-dictionary dependencies. | Reproducible Conda environment. |
-| `provenance.json` | Additional FAIR provenance: model/checkpoint digests, dataset version, MLflow run, software, repository, commit, and export command. | Machine-readable provenance. |
-| `LICENSE` | Distribution terms. | Distribution terms. |
-| `ARTIFACTS.md` | Inventory and upload mapping included inside the package. | Inventory and upload mapping. |
-| `SHA256SUMS` | Integrity manifest for all package files. | Integrity manifest. |
+3. Build, inspect, and verify a package locally:
 
-For the example command, the resulting layout is:
+   ```bash
+   python nidavellir_tools/build_model_package.py \
+     --specification model-package.yaml \
+     --checkpoint lightning_logs/checkpoints/best.ckpt \
+     --state-dict-key state_dict --strip-prefix model. \
+     --test-input validation/test-input.npy \
+     --test-output validation/test-output.npy \
+     --model-card validation/README.md \
+     --trace-input validation/model-ready-input.npy \
+     --extra-file LICENSE \
+     --output-dir output/model
 
-```text
-output/
-├── nuxnet-model.zip
-└── nuxnet-model/
-    ├── ARTIFACTS.md
-    ├── LICENSE
-    ├── README.md
-    ├── SHA256SUMS
-    ├── cover.png
-    ├── environment.yml
-    ├── model.ts
-    ├── provenance.json
-    ├── rdf.yaml
-    ├── test-input.npy
-    ├── test-output.npy
-    ├── unet_3d_models.py
-    └── weights.pt
-```
+   python nidavellir_tools/model_package_registry.py inspect output/model
+   (cd output/model && sha256sum --check SHA256SUMS)
+   ```
 
-The ZIP contains the directory files at its archive root and is the unit uploaded to BioImage.IO. For Hugging Face, upload the individual directory contents to the root of a model repository; the Hub renders `README.md` as the model card and exposes both weight formats. The RDF declares per-volume min/max scaling across `Z/Y/X` when enabled and softmax over the output channel, so BioImage.IO consumers receive background/marker probabilities while direct TorchScript and PyTorch users receive raw logits.
+4. Stage the package again and smoke-test both supported loading paths:
 
-### Consume the exported weights directly
+   ```bash
+   python nidavellir_tools/model_package_registry.py stage \
+     output/model.zip .model-cache/local-model
 
-Load the native state dictionary for Python inference:
+   # Loads self-contained TorchScript when it is available.
+   python nidavellir_tools/model_package_registry.py load \
+     .model-cache/local-model --representation torchscript
 
-```python
-import torch
-from numorph_nuclei_segmentation.model import UNet3D
+   # Extracts reusable parent weights and their metadata sidecar.
+   python nidavellir_tools/model_package_registry.py load \
+     .model-cache/local-model --representation pytorch_state_dict \
+     --weights-output work/parent.pt \
+     --metadata-output work/parent.json
+   ```
 
-model = UNet3D(in_channels=1, classes=2, dropout=0.10)
-model.load_state_dict(torch.load("output/nuxnet-model/weights.pt", weights_only=True))
-model.eval()
-```
+5. Validate and publish only after reviewing the staged contents:
 
-Or load the self-contained TorchScript graph without importing the architecture:
+   ```bash
+   python nidavellir_tools/model_package_registry.py validate output/model.zip
+   python nidavellir_tools/model_package_registry.py publish-hf \
+     output/model owner/model-name --revision main
+   ```
 
-```python
-import torch
+   The BioImage.IO command performs technical validation; submission to the Zoo
+   remains a reviewed upload of `output/model.zip` through BioImage.IO's supported
+   submission workflow.
 
-model = torch.jit.load("output/nuxnet-model/model.ts", map_location="cpu")
-model.eval()
-```
-
-Both direct representations return logits and expect preprocessing consistent with the model card. Apply `softmax(dim=1)` when probabilities are required. BioImage.IO performs the RDF-declared normalization and softmax automatically.
-
-### Validate and publish
-
-FAIR metadata is only useful when it is specific: replace every example value, use persistent ORCID/DOI/dataset identifiers where available, record the MLflow run, and add the run's quantitative validation results to the generated `README.md`. Dataset licensing is independent of the model license; no training data are redistributed. In accordance with the [BioImage.IO developer guide](https://bioimage.io/docs/#/guides/developers-guide?id=models-in-the-bioimage-model-zoo), the package includes weights, example input/output arrays, an RDF, a representative cover, documentation, explicit preprocessing/postprocessing, and every local execution dependency. Validate the actual archive in a current BioImage.IO environment before upload:
+The same registry command can stage each supported source type:
 
 ```bash
-conda create --name bioimageio -c conda-forge bioimageio.core pytorch
-conda activate bioimageio
-bioimageio test output/nuxnet-model.zip
+# Unpacked directory or ZIP
+python nidavellir_tools/model_package_registry.py stage output/model cache/model
+
+# HTTP(S) package
+python nidavellir_tools/model_package_registry.py stage \
+  https://example.org/model.zip cache/model
+
+# Hugging Face model repository; pin an immutable commit for reproducibility
+python nidavellir_tools/model_package_registry.py stage \
+  hf://owner/model-name cache/model --revision COMMIT_SHA
+
+# MLflow run artifact
+python nidavellir_tools/model_package_registry.py stage \
+  mlflow://RUN_ID/model cache/model
 ```
 
-Alternatively, if `bioimageio.core` and its `bioimageio` executable are already installed in the export environment, append `--validate` to the export command to run that check immediately after packaging. A successful technical validation does not replace reporting held-out IoU and other scientific evaluation results in the generated model card.
+### Build a package
 
-After validation:
+Start with a BioImage.IO model RDF YAML file. Its
+`weights.pytorch_state_dict.architecture` declares an importable
+`module:callable`, or a relative Python `source`, bare `callable`, and constructor
+`kwargs`. All other local RDF artifacts—such as dependency files, covers, and
+architecture source—are resolved relative to the specification and copied into
+the package. The builder replaces the declared documentation, test tensor, and
+weight destinations with the supplied run artifacts and recalculates their
+hashes.
 
-* **BioImage.IO:** sign in at [bioimage.io](https://bioimage.io), choose **Upload**, submit `output/nuxnet-model.zip`, review the parsed metadata, validate, and address any reviewer feedback.
-* **Hugging Face:** create a model repository and upload everything inside `output/nuxnet-model/` to its root. Do not upload only `weights.pt`: the model card, provenance, license, architecture, environment, tests, and checksums are the reusable FAIR record.
+This repository includes [`model-package.yaml`](model-package.yaml) as its
+project-owned profile. Review and replace its author, maintainer, citation,
+version, description, tensor contract, and architecture arguments for the actual
+run. Other projects keep their own specification while reusing the commands
+unchanged.
+
+```bash
+python nidavellir_tools/build_model_package.py \
+  --specification model-package.yaml \
+  --checkpoint lightning_logs/checkpoints/best.ckpt \
+  --state-dict-key state_dict --strip-prefix model. \
+  --test-input validation/test-input.npy \
+  --test-output validation/test-output.npy \
+  --model-card validation/README.md \
+  --provenance validation/run-provenance.json \
+  --trace-input validation/model-ready-input.npy \
+  --extra-file LICENSE \
+  --output-dir output/model
+```
+
+`--trace-input` is required only when the RDF declares a TorchScript
+representation. It must contain the tensor presented directly to the network;
+`--test-input` remains the RDF fixture presented to the complete BioImage.IO
+pipeline. The supplied test output must already include the RDF-declared
+postprocessing. This explicit boundary makes the builder usable for 2D or 3D
+vision, classification, regression, restoration, or segmentation without
+silently guessing scientific tensor semantics. Repeat `--test-input` or
+`--test-output` in RDF order for multi-input or multi-output models.
+
+The output consists of `output/model/` for Hugging Face and
+`output/model.zip` for BioImage.IO. Both contain the same RDF, tensor fixtures,
+model card, architecture/dependencies, tensor-only weights, optional TorchScript,
+provenance, and checksums. Validate the final archive before submission:
+
+```bash
+python nidavellir_tools/model_package_registry.py validate output/model.zip
+python nidavellir_tools/model_package_registry.py publish-hf output/model owner/model
+```
+
+### Stage and load a parent model
+
+A package can be staged from a directory, ZIP, HTTP URL, immutable Hugging Face
+revision, or MLflow run artifact. Staging rejects unsafe ZIP paths and validates
+all RDF-declared local checksums.
+
+```bash
+python nidavellir_tools/model_package_registry.py stage \
+  hf://owner/model .model-cache/parent --revision COMMIT_SHA
+
+python nidavellir_tools/model_package_registry.py load .model-cache/parent \
+  --representation pytorch_state_dict \
+  --weights-output work/parent.pt \
+  --metadata-output work/parent.json
+```
+
+The loader strictly reconstructs the RDF-declared architecture. The materialized
+state dictionary retains its packaged bytes, and `parent.json` contains its
+SHA-256, complete RDF, provenance, and selected representation. Treat packaged
+Python architecture code like any other executable dependency: inspect and trust
+the source before loading it.
+
+NuxNet training accepts this cryptographically paired parent directly. The same
+options are exposed by `MLproject`; use paths visible inside the selected Conda or
+Docker environment.
+
+```bash
+mlflow run . \
+  -P initial-weights=work/parent.pt \
+  -P parent-metadata=work/parent.json \
+  -P dataset-path=/new-data
+```
+
+Both options are mandatory together. Training checks that the weight digest
+matches the sidecar, strictly initializes the network, starts fresh optimizer and
+scheduler state, and logs the parent metadata as an MLflow artifact.
+
+### Export the trained child and repeat
+
+A later cycle can derive from the parent package without duplicating its tensor or
+architecture contract:
+
+```bash
+python nidavellir_tools/model_package_registry.py export-child \
+  .model-cache/parent lightning_logs/checkpoints/best.ckpt output/child \
+  --state-dict-key state_dict --strip-prefix model. \
+  --version 2.0.0 --parent-identifier hf://owner/model@COMMIT_SHA \
+  --test-output validation/new-test-output.npy \
+  --model-card validation/child-README.md
+```
+
+Child export strictly checks the checkpoint against the parent architecture,
+removes stale alternative executables, replaces the test evidence and model card,
+updates RDF and package checksums, records explicit parent lineage, and creates a
+new BioImage.IO ZIP. `output/child` can immediately be staged and loaded as the
+parent of another cycle.
+
+A technical round trip does not establish scientific validity. Every child model
+card must document its new dataset, split, metrics, intended use, limitations,
+and licenses. Generate the new test output using the newly trained model plus the
+RDF-declared processing, run `bioimageio test` against the final ZIP, test a clean
+Hugging Face pull by immutable revision, and only then submit to the BioImage.IO
+review workflow. See [`docs/fair_model_packages.rst`](docs/fair_model_packages.rst)
+for the detailed design and acceptance checklist.

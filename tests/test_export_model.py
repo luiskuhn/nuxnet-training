@@ -1,46 +1,87 @@
-import argparse
 import importlib.util
 import json
 from pathlib import Path
 
+import numpy as np
 import torch
 import yaml
 
-from numorph_nuclei_segmentation.model import UNet3D
+
+SCRIPT = Path(__file__).parents[1] / "nidavellir_tools" / "build_model_package.py"
+SPEC = importlib.util.spec_from_file_location("build_model_package", SCRIPT)
+builder = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(builder)
 
 
-SCRIPT = Path(__file__).parents[1] / "tools" / "export_model.py"
-SPEC = importlib.util.spec_from_file_location("export_model", SCRIPT)
-exporter = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(exporter)
-
-
-def test_exports_repository_ready_fair_package(tmp_path):
-    checkpoint = tmp_path / "trained.pt"
-    torch.save(UNet3D(dropout=0.1).state_dict(), checkpoint)
-    args = argparse.Namespace(
-        checkpoint=str(checkpoint), output_dir=str(tmp_path / "package"), name="Test NuxNet",
-        description="A test nucleus-marker model.", author="Test Author", author_orcid="0000-0000-0000-0000",
-        github_user="test-author", license="MIT", citation="Test et al.", doi="10.0000/example",
-        citation_url=None, dataset="example/dataset", dataset_version="1.0", model_version="1.2.3",
-        mlflow_run_id="run-123", source_repository="https://example.org/repo", git_commit="abc123", cover=None,
-        input_channels=1, classes=2, dropout=0.1, normalize_input=True, test_shape=(4, 8, 8), overwrite=False,
+def test_packaging_reference_is_valid_yaml_and_has_required_contract_sections():
+    reference = yaml.safe_load(
+        (SCRIPT.parent / "examples" / "model-package.example.yaml").read_text()
     )
 
-    package, archive = exporter.export_model(args)
+    assert reference["type"] == "model"
+    assert reference["documentation"]["source"] == "README.md"
+    assert reference["inputs"][0]["test_tensor"]["source"]
+    assert reference["outputs"][0]["test_tensor"]["source"]
+    assert reference["weights"]["pytorch_state_dict"]["architecture"]["callable"]
+
+
+def test_builds_domain_independent_repository_package(tmp_path):
+    architecture = tmp_path / "network.py"
+    architecture.write_text(
+        "import torch\nclass Network(torch.nn.Linear):\n"
+        "    def __init__(self, features=2):\n"
+        "        super().__init__(features, features, bias=False)\n",
+        encoding="utf-8",
+    )
+    environment = tmp_path / "environment.yml"
+    environment.write_text("dependencies:\n- pytorch\n", encoding="utf-8")
+    specification = tmp_path / "model.yaml"
+    specification.write_text(yaml.safe_dump({
+        "format_version": "0.5.3", "type": "model", "name": "Generic vision model",
+        "version": "1.0.0", "description": "No domain assumptions.",
+        "documentation": {"source": "README.md"},
+        "inputs": [{"id": "input", "test_tensor": {"source": "test-input.npy"}}],
+        "outputs": [{"id": "output", "test_tensor": {"source": "test-output.npy"}}],
+        "weights": {
+            "pytorch_state_dict": {
+                "source": "weights.pt",
+                "architecture": {"source": "network.py", "callable": "Network",
+                                 "kwargs": {"features": 2}},
+                "dependencies": {"source": "environment.yml"},
+            },
+            "torchscript": {"source": "model.ts", "parent": "pytorch_state_dict"},
+        },
+    }, sort_keys=False), encoding="utf-8")
+    checkpoint = tmp_path / "trained.ckpt"
+    network = torch.nn.Linear(2, 2, bias=False)
+    torch.save({"state_dict": {
+        f"network.{key}": value for key, value in network.state_dict().items()
+    }}, checkpoint)
+    test_input = tmp_path / "input.npy"
+    test_output = tmp_path / "output.npy"
+    np.save(test_input, np.zeros((1, 2), dtype=np.float32))
+    np.save(test_output, np.zeros((1, 2), dtype=np.float32))
+    card = tmp_path / "card.md"
+    card.write_text("# Generic model\n", encoding="utf-8")
+    provenance = tmp_path / "run.json"
+    provenance.write_text(json.dumps({"training": {"run_id": "run-123"}}), encoding="utf-8")
+
+    package, archive = builder.build_model_package(
+        specification, checkpoint, test_input, test_output, card, tmp_path / "package",
+        provenance=provenance, state_dict_key="state_dict", strip_prefix="network.",
+        trace_input=test_input,
+    )
     rdf = yaml.safe_load((package / "rdf.yaml").read_text())
-    provenance = json.loads((package / "provenance.json").read_text())
+    recorded = json.loads((package / "provenance.json").read_text())
 
     assert archive.is_file()
-    assert {"rdf.yaml", "README.md", "ARTIFACTS.md", "cover.png", "weights.pt", "model.ts", "test-input.npy", "test-output.npy", "SHA256SUMS"} <= {p.name for p in package.iterdir()}
-    assert rdf["format_version"] == "0.5.14"
-    assert rdf["inputs"][0]["preprocessing"][1]["id"] == "scale_range"
-    assert rdf["outputs"][0]["postprocessing"][0]["id"] == "softmax"
-    assert rdf["covers"][0]["sha256"] == exporter.sha256(package / "cover.png")
-    assert rdf["weights"]["pytorch_state_dict"]["sha256"] == exporter.sha256(package / "weights.pt")
-    assert provenance["training"]["mlflow_run_id"] == "run-123"
-    assert "pipeline_tag: image-segmentation" in (package / "README.md").read_text()
-    assert "`rdf.yaml`" in (package / "ARTIFACTS.md").read_text()
+    assert {"rdf.yaml", "README.md", "weights.pt", "model.ts", "test-input.npy",
+            "test-output.npy", "network.py", "environment.yml", "provenance.json",
+            "SHA256SUMS"} <= {path.name for path in package.iterdir()}
+    assert rdf["weights"]["pytorch_state_dict"]["sha256"] == builder._digest(package / "weights.pt")
+    assert rdf["weights"]["torchscript"]["sha256"] == builder._digest(package / "model.ts")
+    assert recorded["training"]["run_id"] == "run-123"
+    assert recorded["training"]["checkpoint_sha256"] == builder._digest(checkpoint)
 
 
 def test_rejects_nonempty_output_without_overwrite(tmp_path):
@@ -49,8 +90,8 @@ def test_rejects_nonempty_output_without_overwrite(tmp_path):
     output = tmp_path / "package"
     output.mkdir()
     (output / "keep.txt").write_text("do not delete")
-    checkpoint = tmp_path / "checkpoint.pt"
-    checkpoint.write_bytes(b"not read because the output guard runs first")
-    args = argparse.Namespace(checkpoint=str(checkpoint), output_dir=str(output), overwrite=False)
     with pytest.raises(FileExistsError, match="output directory is not empty"):
-        exporter.export_model(args)
+        builder.build_model_package(
+            tmp_path / "missing.yaml", tmp_path / "missing.pt", tmp_path / "input.npy",
+            tmp_path / "output.npy", tmp_path / "README.md", output,
+        )
