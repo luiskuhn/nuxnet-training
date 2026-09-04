@@ -3,12 +3,13 @@
 import numpy as np
 import pytorch_lightning as pl
 import torch
+from torchmetrics.classification import (
+    BinaryJaccardIndex,
+    MulticlassAccuracy,
+    MulticlassJaccardIndex,
+)
 
 from numorph_nuclei_segmentation.losses.dice_ce_loss import DiceCrossEntropyLoss
-from numorph_nuclei_segmentation.metrics.metrics import (
-    AlreadySyncedScalar,
-    SegmentationConfusionMetric,
-)
 from numorph_nuclei_segmentation.model.unet_3d_models import UNet3D
 
 
@@ -49,29 +50,36 @@ class NumorphSegmentator(pl.LightningModule):
             kwargs.get("dice_loss_weight", 1.0),
             ce_weights,
         )
-        self.train_confusion = SegmentationConfusionMetric(kwargs["n_class"])
-        self.val_confusion = SegmentationConfusionMetric(kwargs["n_class"])
-        self.test_confusion = SegmentationConfusionMetric(kwargs["n_class"])
-        metric_names = (
-            "avg_acc",
-            "mean_iou",
-            *(f"iou_{i}" for i in range(kwargs["n_class"])),
-        )
-        self._logged_epoch_metrics = torch.nn.ModuleDict(
-            {
-                f"{phase}_{name}": AlreadySyncedScalar()
-                for phase in ("train", "val", "test")
-                for name in metric_names
-            }
-        )
+        if kwargs["n_class"] != 2:
+            raise ValueError("segmentation metrics require exactly two classes")
+        for phase in ("train", "val", "test"):
+            setattr(
+                self,
+                f"{phase}_accuracy",
+                MulticlassAccuracy(num_classes=2, average="micro"),
+            )
+            setattr(
+                self,
+                f"{phase}_iou_0",
+                BinaryJaccardIndex(threshold=0.5, zero_division=0),
+            )
+            setattr(
+                self,
+                f"{phase}_iou_1",
+                BinaryJaccardIndex(threshold=0.5, zero_division=0),
+            )
+            setattr(
+                self,
+                f"{phase}_mean_iou",
+                MulticlassJaccardIndex(
+                    num_classes=2, average="macro", zero_division=0
+                ),
+            )
 
     def forward(self, x):
         return self.model(x)
 
-    def _accumulate(self, prefix, prediction, target):
-        getattr(self, f"{prefix}_confusion").update(prediction, target)
-
-    def _shared_step(self, batch, prefix, *, sliding=False):
+    def _shared_step(self, batch, phase, *, sliding=False):
         image, target = batch
         logits = (
             sliding_window_inference(
@@ -84,11 +92,12 @@ class NumorphSegmentator(pl.LightningModule):
             if sliding
             else self(image)
         )
-        prediction = torch.argmax(logits, dim=1)
-        loss = self.criterion(logits, target.long())
+        prediction = logits.argmax(dim=1)
+        target = target.long()
+        loss = self.criterion(logits, target)
         batch_size = image.shape[0]
         self.log(
-            f"{prefix}_avg_loss",
+            f"{phase}_avg_loss",
             loss,
             on_step=False,
             on_epoch=True,
@@ -96,7 +105,26 @@ class NumorphSegmentator(pl.LightningModule):
             sync_dist=True,
             batch_size=batch_size,
         )
-        self._accumulate(prefix, prediction, target)
+        accuracy = getattr(self, f"{phase}_accuracy")
+        iou_0 = getattr(self, f"{phase}_iou_0")
+        iou_1 = getattr(self, f"{phase}_iou_1")
+        mean_iou = getattr(self, f"{phase}_mean_iou")
+        accuracy.update(prediction, target)
+        iou_0.update((prediction == 0).int(), (target == 0).int())
+        iou_1.update((prediction == 1).int(), (target == 1).int())
+        mean_iou.update(prediction, target)
+        for name, metric in (
+            ("avg_acc", accuracy),
+            ("iou_0", iou_0),
+            ("iou_1", iou_1),
+            ("mean_iou", mean_iou),
+        ):
+            self.log(
+                f"{phase}_{name}",
+                metric,
+                on_step=False,
+                on_epoch=True,
+            )
         return loss
 
     def _patch_size(self):
@@ -107,45 +135,6 @@ class NumorphSegmentator(pl.LightningModule):
             else tuple(value)
         )
 
-    def _log_epoch_metrics(self, prefix):
-        metric = getattr(self, f"{prefix}_confusion")
-        # Metric.compute() synchronizes its additive state with a DDP sum.  The
-        # resulting tensors are already global and must not be reduced again by
-        # Lightning's logging machinery.
-        iou, mean_iou, accuracy = metric.compute()
-
-        def log_global(name, value):
-            # Logging a non-synchronizing Metric tells Lightning that this is a
-            # computed metric (rather than a rank-local tensor), avoiding its
-            # tensor warning without performing a second distributed reduction.
-            key = f"{prefix}_{name}"
-            logged_metric = self._logged_epoch_metrics[key]
-            logged_metric.update(value.to(torch.float32))
-            self.log(
-                key,
-                logged_metric,
-                sync_dist=False,
-                metric_attribute=f"_logged_epoch_metrics.{key}",
-            )
-
-        log_global("avg_acc", accuracy)
-        for class_id, score in enumerate(iou):
-            log_global(f"iou_{class_id}", score)
-        log_global("mean_iou", mean_iou)
-        metric.reset()
-
-    def on_train_epoch_start(self):
-        self.train_confusion.reset()
-
-    def on_validation_epoch_start(self):
-        # Lightning invokes validation hooks during the pre-training sanity
-        # check as well.  Starting and ending every validation phase cleanly
-        # prevents sanity samples from leaking into scheduled validation.
-        self.val_confusion.reset()
-
-    def on_test_epoch_start(self):
-        self.test_confusion.reset()
-
     def training_step(self, batch, batch_idx):
         return self._shared_step(batch, "train")
 
@@ -154,15 +143,6 @@ class NumorphSegmentator(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
         return self._shared_step(batch, "test", sliding=True)
-
-    def on_train_epoch_end(self):
-        self._log_epoch_metrics("train")
-
-    def on_validation_epoch_end(self):
-        self._log_epoch_metrics("val")
-
-    def on_test_epoch_end(self):
-        self._log_epoch_metrics("test")
 
     def configure_optimizers(self):
         """Configure Adam and observe the plateau only after each validation run.

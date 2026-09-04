@@ -10,7 +10,8 @@ Unreleased
 **Added**
 
 * Select checkpoints and schedule learning rate from foreground validation IoU.
-* Aggregate IoU and accuracy from epoch-level, DDP-reduced confusion counts.
+* Aggregate IoU and accuracy with phase-specific TorchMetrics whose state and
+  distributed synchronization are managed by Lightning.
 * Evaluate complete held-out volumes with deterministic sliding-window inference.
 
 * A domain-independent model registry tool for verified staging from local,
