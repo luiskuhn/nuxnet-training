@@ -1,5 +1,6 @@
 torch==2.5.1
 pytorch-lightning==2.4.0
+torchmetrics==1.4.2
 numpy==1.26.4
 tifffile==2024.8.30
 rich==13.9.4

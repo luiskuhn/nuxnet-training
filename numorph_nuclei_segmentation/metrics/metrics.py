@@ -1,6 +1,7 @@
 """Tensor-only confusion-count metrics for segmentation epochs."""
 
 import torch
+from torchmetrics import Metric
 
 
 def confusion_counts(prediction, target, n_classes):
@@ -31,6 +32,49 @@ def metrics_from_confusion(counts):
     total = counts[0].sum()
     accuracy = counts[:, 0].sum() / total if total > 0 else total.new_zeros(())
     return iou, iou.mean(), accuracy
+
+
+class SegmentationConfusionMetric(Metric):
+    """Globally aggregate exact segmentation confusion counts.
+
+    TorchMetrics performs the DDP sum when :meth:`compute` is called.  Consumers
+    must therefore log the returned values with ``sync_dist=False``: every rank
+    already has the same globally reduced result and another reduction would be
+    both redundant and potentially error prone.
+    """
+
+    full_state_update = False
+
+    def __init__(self, n_classes):
+        super().__init__(dist_sync_on_step=False, sync_on_compute=True)
+        self.n_classes = n_classes
+        self.add_state(
+            "counts",
+            default=torch.zeros((n_classes, 4), dtype=torch.long),
+            dist_reduce_fx="sum",
+        )
+
+    def update(self, prediction, target):
+        self.counts += confusion_counts(prediction, target, self.n_classes)
+
+    def compute(self):
+        return metrics_from_confusion(self.counts)
+
+
+class AlreadySyncedScalar(Metric):
+    """Expose an already-global scalar to Lightning without another collective."""
+
+    full_state_update = False
+
+    def __init__(self):
+        super().__init__(dist_sync_on_step=False, sync_on_compute=False)
+        self.add_state("value", default=torch.tensor(0.0), dist_reduce_fx=None)
+
+    def update(self, value):
+        self.value.copy_(value)
+
+    def compute(self):
+        return self.value
 
 
 # Compatibility wrappers for downstream imports. Epoch aggregation should use
