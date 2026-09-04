@@ -1,7 +1,6 @@
 import pytest
 import torch
 
-from numorph_nuclei_segmentation.metrics.metrics import confusion_counts
 from numorph_nuclei_segmentation.model.model import sliding_window_inference
 
 
@@ -61,9 +60,8 @@ def test_signal_outside_the_old_center_patch_contributes_to_counts():
     prediction = sliding_window_inference(
         image, PointwisePredictor(), (4, 8, 8), 0.5, 2
     ).argmax(1)
-    counts = confusion_counts(prediction, target, 2)
-    assert counts[1, 0] == 32
-    assert counts[1, 2] == 0
+    assert ((prediction == 1) & (target == 1)).sum() == 32
+    assert ((prediction == 0) & (target == 1)).sum() == 0
 
 
 @pytest.mark.parametrize("overlap", [-0.1, 1.0])
