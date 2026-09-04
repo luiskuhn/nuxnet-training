@@ -8,6 +8,7 @@ import tifffile
 import torch
 
 from numorph_nuclei_segmentation.data_loading.data_loader import (
+    NumorphDataModule,
     VolumeDataset,
     VolumePair,
     _download_url,
@@ -339,6 +340,20 @@ def test_training_augmentation_defaults_to_requested_patch_and_rotation():
     assert args.cross_validation_folds == 5
     assert args.validation_fold == 0
     assert args.dropout_rate == 0.10
+
+
+def test_volume_dataloader_workers_are_released_at_epoch_boundaries():
+    """Worker-local full-volume caches must not survive between epochs."""
+    args = vars(build_parser().parse_args(["--num_workers", "2"]))
+    data = NumorphDataModule(**args)
+    sample = torch.zeros(1, 1, 4, 4, 4)
+    target = torch.zeros(1, 4, 4, 4, dtype=torch.long)
+    data.train_dataset = torch.utils.data.TensorDataset(sample, target)
+    data.test_dataset = torch.utils.data.TensorDataset(sample, target)
+
+    assert data.train_dataloader().persistent_workers is False
+    assert data.val_dataloader().persistent_workers is False
+    assert data.test_dataloader().persistent_workers is False
 
 
 def test_cross_validation_uses_seeded_random_fold_and_all_samples():
