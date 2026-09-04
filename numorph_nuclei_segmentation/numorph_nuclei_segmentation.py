@@ -12,6 +12,7 @@ from pytorch_lightning.loggers import TensorBoardLogger
 from rich import print
 
 from numorph_nuclei_segmentation.data_loading.data_loader import (
+    DEFAULT_TARGET_VOXEL_SIZE_UM,
     NUMORPH_DATASET_URL,
     NumorphDataModule,
 )
@@ -19,19 +20,21 @@ from numorph_nuclei_segmentation.mlf_core.mlf_core import MLFCore
 from numorph_nuclei_segmentation.model.model import NumorphSegmentator
 
 
-def parse_target_voxel_spacing(value: str) -> tuple[float, float, float]:
-    """Parse a positive ``Z,Y,X`` voxel spacing at the CLI boundary."""
+def parse_target_voxel_size(value: str) -> tuple[float, float, float]:
+    """Parse positive physical voxel sizes in ``Z,Y,X`` order."""
     try:
-        spacing = tuple(float(component.strip()) for component in value.split(","))
+        voxel_size_um = tuple(
+            float(component.strip()) for component in value.split(",")
+        )
     except ValueError as error:
         raise argparse.ArgumentTypeError(
-            "target voxel spacing must contain three numeric values in Z,Y,X order"
+            "target voxel size must contain three numeric values in Z,Y,X order"
         ) from error
-    if len(spacing) != 3 or any(component <= 0 for component in spacing):
+    if len(voxel_size_um) != 3 or any(component <= 0 for component in voxel_size_um):
         raise argparse.ArgumentTypeError(
-            "target voxel spacing must contain three positive values in Z,Y,X order"
+            "target voxel size must contain three positive values in Z,Y,X order"
         )
-    return spacing
+    return voxel_size_um
 
 
 def nonnegative_float(value: str) -> float:
@@ -144,10 +147,10 @@ def build_parser():
     )
     parser.add_argument(
         "--target-voxel-spacing",
-        type=parse_target_voxel_spacing,
-        default=(3.0, 1.0, 1.0),
+        type=parse_target_voxel_size,
+        default=DEFAULT_TARGET_VOXEL_SIZE_UM,
         metavar="Z,Y,X",
-        help="Synthetic target spacing in Z,Y,X order, in µm/voxel",
+        help="Target physical voxel size in Z,Y,X order, in µm per voxel",
     )
     parser.add_argument(
         "--normalize-input", action=argparse.BooleanOptionalAction, default=True
