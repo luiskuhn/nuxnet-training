@@ -1,6 +1,7 @@
 import torch
 
 from numorph_nuclei_segmentation.metrics.metrics import (
+    SegmentationConfusionMetric,
     confusion_counts,
     metrics_from_confusion,
 )
@@ -33,3 +34,19 @@ def test_zero_union_class_has_zero_iou():
     assert torch.equal(iou, torch.tensor([1.0, 0.0], dtype=torch.float64))
     assert mean_iou == 0.5
     assert accuracy == 1.0
+
+
+def test_metric_accumulates_exact_counts_and_resets():
+    metric = SegmentationConfusionMetric(2)
+    prediction = torch.tensor([0, 1, 1, 0])
+    target = torch.tensor([0, 1, 0, 0])
+    expected = confusion_counts(prediction, target, 2)
+
+    metric.update(prediction[:2], target[:2])
+    metric.update(prediction[2:], target[2:])
+    assert torch.equal(metric.counts, expected)
+    for actual, wanted in zip(metric.compute(), metrics_from_confusion(expected)):
+        assert torch.equal(actual, wanted)
+
+    metric.reset()
+    assert torch.equal(metric.counts, torch.zeros_like(expected))
