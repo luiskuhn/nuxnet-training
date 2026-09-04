@@ -46,6 +46,14 @@ def nonnegative_float(value: str) -> float:
     return parsed
 
 
+def positive_integer(value: str) -> int:
+    """Parse an integer that can safely be used as an epoch frequency."""
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("value must be a positive integer")
+    return parsed
+
+
 def probability(value: str) -> float:
     parsed = float(value)
     if not 0.0 <= parsed <= 1.0:
@@ -166,7 +174,15 @@ def build_parser():
         default=0,
         help="One-based fold used for validation and test metrics; 0 selects a fold from --general-seed",
     )
-    parser.add_argument("--test-epochs", type=int, default=10)
+    parser.add_argument(
+        "--test-epochs",
+        type=positive_integer,
+        default=10,
+        help=(
+            "Epochs between validation runs and plateau-scheduler observations; "
+            "must be positive"
+        ),
+    )
     parser.add_argument("--dataset-path", default="/data")
     parser.add_argument(
         "--download-dataset",

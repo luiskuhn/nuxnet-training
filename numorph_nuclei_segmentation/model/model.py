@@ -15,6 +15,13 @@ from numorph_nuclei_segmentation.model.unet_3d_models import UNet3D
 class NumorphSegmentator(pl.LightningModule):
     def __init__(self, **kwargs):
         super().__init__()
+        test_epochs = kwargs.get("test_epochs")
+        if (
+            isinstance(test_epochs, bool)
+            or not isinstance(test_epochs, int)
+            or test_epochs < 1
+        ):
+            raise ValueError("test_epochs must be a positive integer")
         self.args = kwargs
         self.save_hyperparameters(kwargs)
         self.model = UNet3D(
@@ -123,6 +130,12 @@ class NumorphSegmentator(pl.LightningModule):
         self._log_epoch_metrics("test")
 
     def configure_optimizers(self):
+        """Configure Adam and observe the plateau only after each validation run.
+
+        ``test_epochs`` is both Lightning's validation interval and the scheduler
+        frequency, so plateau patience and cooldown count validation observations
+        rather than training epochs.
+        """
         optimizer = torch.optim.Adam(self.parameters(), lr=self.args["lr"])
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
@@ -137,7 +150,12 @@ class NumorphSegmentator(pl.LightningModule):
         )
         return {
             "optimizer": optimizer,
-            "lr_scheduler": {"scheduler": scheduler, "monitor": "val_iou_1"},
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "monitor": "val_iou_1",
+                "interval": "epoch",
+                "frequency": self.args["test_epochs"],
+            },
         }
 
 

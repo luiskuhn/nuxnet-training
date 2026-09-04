@@ -96,7 +96,7 @@ These options have the greatest effect on training quality, runtime, and memory:
 | Right-angle rotation | `--random-rotation-90-probability` | `0.5` | Probability of an exact random 0°, 90°, 180°, or 270° XY rotation. |
 | Folds | `--cross-validation-folds` | `5` | Number of shuffled, resolution-group-stratified folds (at least two). |
 | Held-out fold | `--validation-fold` | `0` | One-based validation/test fold. `0` selects reproducibly from the general seed. |
-| Validation interval | `--test-epochs` | `10` | Run validation every N epochs. Final testing always uses the best checkpoint. |
+| Validation interval | `--test-epochs` | `10` | Run validation every positive N epochs and observe `val_iou_1` for the plateau scheduler at the same frequency. Scheduler patience and cooldown count validation evaluations, not training epochs. For example, `--test-epochs 5 --lr-scheduler-patience 6` reduces the LR after approximately 35 stagnant training epochs because PyTorch reduces after the seventh non-improving validation observation. Final testing always uses the best checkpoint. |
 | Input normalization | `--normalize-input` / `--no-normalize-input` | enabled | Per-volume min/max normalization compatible with inference. Disable only for prepared inputs. |
 
 Reproducibility and execution options:
