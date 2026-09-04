@@ -1,6 +1,7 @@
 import ast
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -61,6 +62,21 @@ def test_resampling_preserves_thin_marker_components():
     mask[6, 18, 18] = 1
     _, result = resample_volume_pair(image, mask, (1.0, 1.0, 1.0), (3.0, 1.0, 1.0))
     assert result.sum() >= 2
+
+
+def test_resampling_skips_component_scan_when_the_mask_cannot_shrink():
+    image = np.ones((1, 4, 8, 8), dtype=np.float32)
+    mask = np.ones((4, 8, 8), dtype=np.uint8)
+
+    with patch(
+        "numorph_nuclei_segmentation.data_loading.data_loader._component_centroids",
+        side_effect=AssertionError("component scan should not run"),
+    ):
+        _, result = resample_volume_pair(
+            image, mask, (3.0, 1.0, 1.0), (3.0, 1.0, 1.0)
+        )
+
+    assert np.array_equal(result, mask)
 
 
 def test_exact_rotation_is_xy_only_and_binary(monkeypatch):
