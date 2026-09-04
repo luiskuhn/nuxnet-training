@@ -8,6 +8,7 @@ def test_mlproject_exposes_and_forwards_anisotropic_training_parameters():
     main = project["entry_points"]["main"]
     parameters = main["parameters"]
     expected_defaults = {
+        "patch-size": "32,128,128",
         "target-voxel-spacing": "3.0,1.0,1.0",
         "random-rotation-degrees": 10.0,
         "random-rotation-90-probability": 0.5,

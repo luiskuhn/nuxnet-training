@@ -17,6 +17,6 @@ Training
 --------
 
 Training uses deterministic, resolution-stratified holdout selection and
-foreground-aware ``16x64x64`` patches. Min/max normalization matches the
+foreground-aware ``32x128x128`` patches. Min/max normalization matches the
 inference preprocessing. The final ``numorph_unet3d.pt`` artifact is a plain
 PyTorch state dictionary suitable for the inference CLI with ``--classes 2``.

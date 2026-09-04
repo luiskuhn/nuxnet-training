@@ -17,11 +17,19 @@ The default `NUMORPH_SEM_SEG_DATASET` contains 32 paired OME-TIFF image/mask vol
 > [!IMPORTANT]
 > Masks are manually curated **2D middle-Z nucleus markers for detection**, stored in 3D volumes. They are not complete 3D boundaries or instance segmentations. Confirm the dataset's reuse terms before redistribution because its packaged metadata currently records the license and public resource identifiers as pending.
 
-## Physical-space training pipeline
+## Image and mask loading
 
-Every image/mask pair is calibrated from OME `PhysicalSizeX/Y/Z` metadata and resampled, in **Z,Y,X** order, to `--target-voxel-spacing` (default `3.0,1.0,1.0` µm/voxel) before patches are selected. Images use anti-aliased trilinear resampling, masks use nearest-exact interpolation, and a centroid safeguard prevents thin one-slice marker components from disappearing. Resampled volumes are cached so multiple patches do not repeat this work. The default `32,128,128` patch therefore represents approximately `96 × 128 × 128` µm for either source resolution.
+The loader reads the first series from each OME-TIFF and uses the OME `PhysicalSizeZ`, `PhysicalSizeY`, and `PhysicalSizeX` values as the **physical voxel size**. Values are converted to µm and kept in **Z,Y,X** order. Images are returned as `CZYX`; masks are returned as `ZYX`. Singleton scene and time axes are removed, while files containing multiple scenes or time points are rejected so that each table row always describes one volume.
 
-Training augmentation is limited to exact and continuous rotations in the XY plane, so Z is never mixed with a lateral axis. Validation and testing use only deterministic spacing normalization and centered cropping. Random scale jitter is intentionally not included.
+### Resampling to a common physical voxel size
+
+Before selecting patches, every image/mask pair is placed on the physical voxel-size grid requested by `--target-voxel-spacing` (default `3.0,1.0,1.0` µm per voxel). The output length of each axis is `input length × source voxel size / target voxel size`, preserving the volume's physical extent. Images use Gaussian anti-aliasing when an axis is reduced and trilinear interpolation; masks use nearest-neighbor interpolation. A component-centroid safeguard keeps sparse, one-slice markers from disappearing during downsampling. The resampled volumes are cached in memory and reused for later patches.
+
+### Patch sampling and augmentation
+
+The default patch is `32,128,128` voxels, representing approximately `96 × 128 × 128` µm on the default grid. Each training volume contributes eight patches per epoch. A patch is centered on a randomly selected foreground voxel with probability `0.8`; otherwise its start is random. Volumes smaller than a patch are zero-padded. Validation and test samples use one deterministic center patch per volume.
+
+Training patches may receive an exact random 0°, 90°, 180°, or 270° rotation in the XY plane, followed by a continuous angle sampled from −10° to +10°. Image and mask transformations stay aligned, mask interpolation remains nearest-neighbor, and Z is never mixed with a lateral axis. There are no random flips, intensity perturbations, elastic transforms, or scale jitter. Per-volume min/max image normalization is enabled by default.
 
 ## Logits, loss, and probabilities
 
@@ -77,7 +85,7 @@ These options have the greatest effect on training quality, runtime, and memory:
 | LR scheduler cooldown | `--lr-scheduler-cooldown` | `2` | Epochs to wait after a rate reduction before resuming plateau checks. |
 | Minimum learning rate | `--min-lr` | `1e-6` | Lower bound for learning-rate reductions. |
 | Patch size | `--patch-size Z,Y,X` | `32,128,128` | Spatial context per sample. Each dimension must be divisible by four; larger patches require more memory. |
-| Target voxel spacing | `--target-voxel-spacing Z,Y,X` | `3.0,1.0,1.0` | Common synthetic grid in Z,Y,X order, in µm/voxel. |
+| Target physical voxel size | `--target-voxel-spacing Z,Y,X` | `3.0,1.0,1.0` | OME-style physical size of one output voxel in Z,Y,X order, in µm per voxel. |
 | Training batch size | `--training-batch-size` | `1` | Patches per optimizer step. Increase only when memory permits. |
 | Patches per volume | `--patches-per-volume` | `8` | Random training patches drawn from each volume per epoch. Higher values provide more sampling at greater runtime. |
 | Foreground sampling | `--foreground-patch-probability` | `0.8` | Probability that a training patch is centered on a marker (`0`–`1`). |
@@ -192,7 +200,7 @@ Paths are relative to the dataset root and every image must have exactly one mas
 
 All records participate in a shuffled, group-stratified split. The held-out fold supplies both validation data during fitting and final test metrics; a run fits **one model**, not one model per fold. The resolved fold is printed and logged to MLflow as `selected_validation_fold`.
 
-The [physical-space training pipeline](#physical-space-training-pipeline) is applied before patch selection. Training then adds random crops and foreground-aware sampling; validation/test use centered crops and no random augmentation. Smaller normalized volumes are zero padded.
+The [physical voxel-size resampling](#resampling-to-a-common-physical-voxel-size) is applied before patch selection. Training then adds random crops and foreground-aware sampling; validation/test use centered crops and no random augmentation. Smaller normalized volumes are zero padded.
 
 ## Other ways to run
 

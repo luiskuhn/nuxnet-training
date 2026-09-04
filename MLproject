@@ -43,7 +43,7 @@ entry_points:
       n-class: {type: int, default: 2}
       num_workers: {type: int, default: 24}
       dropout-rate: {type: float, default: 0.10}
-      patch-size: {type: string, default: '16,64,64'}
+      patch-size: {type: string, default: '32,128,128'}
       target-voxel-spacing: {type: string, default: '3.0,1.0,1.0'}
       normalize-input: {type: string, default: '--normalize-input'}
       patches-per-volume: {type: int, default: 8}
