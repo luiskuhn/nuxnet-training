@@ -131,9 +131,6 @@ def build_parser():
         default="1.0,1.0",
         help="Explicit per-class weights (default is unweighted)",
     )
-    parser.add_argument(
-        "--loss-function", choices=("focal", "dice-ce"), default="dice-ce"
-    )
     parser.add_argument("--ce-loss-weight", type=nonnegative_float, default=1.0)
     parser.add_argument("--dice-loss-weight", type=nonnegative_float, default=1.0)
     parser.add_argument(
