@@ -106,7 +106,7 @@ Reproducibility and execution options:
 | `--general-seed`, `--pytorch-seed` | `0`, `0` | Python/NumPy and PyTorch random seeds. |
 | `--accelerator` | `auto` | Lightning accelerator: `auto`, `cpu`, or `gpu`. |
 | `--devices` | `auto` | Device count or `auto`; use with `--strategy` for distributed training. |
-| `--num_workers` | `2` | Data-loader workers. Increase when input loading limits throughput. |
+| `--num_workers` | `0` | Data-loader workers. Increase when input loading limits throughput; positive values retain safe spawn-based workers. |
 | `--log-interval` | `100` | Training steps between log writes. |
 | `--n-channels`, `--n-class` | `1`, `2` | Input channels and output classes. Defaults match NuMorph and inference. |
 | `--test-batch-size` | `1` | Number of sliding inference windows processed simultaneously during validation/test. |
