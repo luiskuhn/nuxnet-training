@@ -460,22 +460,23 @@ def resample_volume_pair(
 def _crop_or_pad(
     image: np.ndarray,
     label: np.ndarray,
+    foreground_coordinates: np.ndarray,
     patch: tuple[int, int, int],
     random_crop: bool,
     foreground_probability: float,
 ):
-    padding = [(0, 0)] + [
-        (0, max(0, size - actual)) for actual, size in zip(label.shape, patch)
-    ]
-    image = np.pad(image, padding, mode="constant")
-    label = np.pad(label, padding[1:], mode="constant")
-    foreground = np.argwhere(label > 0)
     foreground_center = None
-    if random_crop and len(foreground) and np.random.random() < foreground_probability:
-        foreground_center = foreground[np.random.randint(len(foreground))]
+    if (
+        random_crop
+        and len(foreground_coordinates)
+        and np.random.random() < foreground_probability
+    ):
+        foreground_center = foreground_coordinates[
+            np.random.randint(len(foreground_coordinates))
+        ]
     starts = []
     for axis, (actual, size) in enumerate(zip(label.shape, patch)):
-        maximum = actual - size
+        maximum = max(0, actual - size)
         if foreground_center is not None:
             start = int(np.clip(foreground_center[axis] - size // 2, 0, maximum))
         elif random_crop and maximum:
@@ -484,7 +485,19 @@ def _crop_or_pad(
             start = maximum // 2
         starts.append(start)
     spatial = tuple(slice(start, start + size) for start, size in zip(starts, patch))
-    return image[(slice(None), *spatial)], label[spatial]
+    cropped_image = image[(slice(None), *spatial)]
+    cropped_label = label[spatial]
+    if cropped_label.shape == patch:
+        return cropped_image, cropped_label
+
+    # Only undersized axes require an allocation. Avoid padding (and copying)
+    # an entire volume before extracting a much smaller training patch.
+    padded_image = np.zeros((image.shape[0], *patch), dtype=image.dtype)
+    padded_label = np.zeros(patch, dtype=label.dtype)
+    destination = tuple(slice(0, size) for size in cropped_label.shape)
+    padded_image[(slice(None), *destination)] = cropped_image
+    padded_label[destination] = cropped_label
+    return padded_image, padded_label
 
 
 def _random_rotate(
@@ -608,16 +621,27 @@ class VolumeDataset(Dataset):
                 raise ValueError(
                     f"Image and mask shapes differ for {pair.image_id}: {image.shape[1:]} != {label.shape}"
                 )
+            if image.shape[0] != 1:
+                raise ValueError(
+                    f"The inference UNet3D expects one image channel, got {image.shape[0]} for {pair.image_id}"
+                )
             if not np.issubdtype(label.dtype, np.integer):
                 if not np.array_equal(label, label.astype(np.int64)):
                     raise ValueError(
                         f"Mask contains non-integer class labels: {pair.annotation}"
                     )
-            invalid_labels = np.setdiff1d(np.unique(label), (0, 1))
+            label_values = np.unique(label)
+            invalid_labels = np.setdiff1d(label_values, (0, 1))
             if invalid_labels.size:
                 raise ValueError(
                     f"Mask for {pair.image_id} must contain binary voxel labels 0 and 1 only; "
                     f"found {invalid_labels.tolist()}"
+                )
+            if self.classes is not None and (
+                label_values[0] < 0 or label_values[-1] >= self.classes
+            ):
+                raise ValueError(
+                    f"Mask labels for {pair.image_id} must be in [0, {self.classes - 1}]"
                 )
             image, label = resample_volume_pair(
                 image.astype(np.float32, copy=False),
@@ -625,41 +649,22 @@ class VolumeDataset(Dataset):
                 image_volume.voxel_size_um,
                 self.target_voxel_size_um,
             )
-            self._volume_cache[pair.image_id] = image, label
-        image, label = self._volume_cache[pair.image_id]
-        if not np.issubdtype(label.dtype, np.integer):
-            if not np.array_equal(label, label.astype(np.int64)):
-                raise ValueError(
-                    f"Mask contains non-integer class labels: {pair.annotation}"
+            label = label.astype(np.int64, copy=False)
+            if self.normalize:
+                low, high = float(image.min()), float(image.max())
+                image = (
+                    (image - low) / (high - low)
+                    if high > low
+                    else np.zeros_like(image)
                 )
-        label = label.astype(np.int64, copy=False)
-        invalid_labels = np.setdiff1d(np.unique(label), (0, 1))
-        if invalid_labels.size:
-            raise ValueError(
-                f"Mask for {pair.image_id} must contain binary voxel labels 0 and 1 only; "
-                f"found {invalid_labels.tolist()}"
-            )
-        if image.shape[1:] != label.shape:
-            raise ValueError(
-                f"Image and mask shapes differ for {pair.image_id}: {image.shape[1:]} != {label.shape}"
-            )
-        if image.shape[0] != 1:
-            raise ValueError(
-                f"The inference UNet3D expects one image channel, got {image.shape[0]} for {pair.image_id}"
-            )
-        if self.classes is not None and (
-            label.min() < 0 or label.max() >= self.classes
-        ):
-            raise ValueError(
-                f"Mask labels for {pair.image_id} must be in [0, {self.classes - 1}]"
-            )
-        if self.normalize:
-            low, high = float(image.min()), float(image.max())
-            image = (image - low) / (high - low) if high > low else np.zeros_like(image)
+            foreground_coordinates = np.argwhere(label > 0)
+            self._volume_cache[pair.image_id] = image, label, foreground_coordinates
+        image, label, foreground_coordinates = self._volume_cache[pair.image_id]
         if self.patch_size:
             image, label = _crop_or_pad(
                 image,
                 label,
+                foreground_coordinates,
                 self.patch_size,
                 self.random_crop,
                 self.foreground_probability,
