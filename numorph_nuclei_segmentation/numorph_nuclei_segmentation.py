@@ -204,7 +204,7 @@ def build_parser():
     )
     parser.add_argument("--n-channels", type=int, default=1)
     parser.add_argument("--n-class", type=int, default=2)
-    parser.add_argument("--num_workers", type=int, default=2)
+    parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--dropout-rate", type=float, default=0.10)
     parser.add_argument(
         "--initial-weights",

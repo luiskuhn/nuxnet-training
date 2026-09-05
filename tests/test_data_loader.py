@@ -257,6 +257,11 @@ def test_foreground_sampling_keeps_sparse_nucleus_markers(tmp_path: Path):
 
     assert len(dataset) == 2
     assert int(dataset[0][1].sum()) == 1
+    cached_image, cached_label, cached_foreground = dataset._volume_cache["sparse"]
+    assert cached_image.shape[1:] == cached_label.shape
+    assert cached_foreground.shape == (1, 3)
+    assert tuple(cached_foreground[0]) == (0, 0, 0)
+    assert int(dataset[1][1].sum()) == 1
 
 
 def test_random_rotation_preserves_shape_dtype_and_mask_classes(tmp_path: Path):
@@ -341,6 +346,7 @@ def test_training_augmentation_defaults_to_requested_patch_and_rotation():
     assert args.cross_validation_folds == 5
     assert args.validation_fold == 0
     assert args.dropout_rate == 0.10
+    assert args.num_workers == 0
 
 
 def test_volume_dataloader_workers_are_released_at_epoch_boundaries():
