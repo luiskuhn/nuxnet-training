@@ -1,12 +1,14 @@
-format_version: 0.5.14
+format_version: 0.5.12
 type: model
 name: NuMorph nucleus-marker U-Net
 version: 1.0.0
 description: 3D U-Net for nucleus-marker detection in cleared mouse-brain microscopy
 authors:
-  - name: REPLACE WITH MODEL AUTHOR
+  - name: Luis Kuhn
+    github_user: luiskuhn
 maintainers:
-  - name: REPLACE WITH MODEL MAINTAINER
+  - name: Luis Kuhn
+    github_user: luiskuhn
 license: MIT
 documentation:
   source: README.md
@@ -26,6 +28,7 @@ inputs:
       - {id: y, type: space, size: {min: 4, step: 4}}
       - {id: x, type: space, size: {min: 4, step: 4}}
     data: {type: float32, range: [null, null]}
+    sample_tensor: {source: test-input.npy}
     test_tensor: {source: test-input.npy}
 outputs:
   - id: logits
@@ -37,6 +40,7 @@ outputs:
       - {id: y, type: space, size: {tensor_id: input, axis_id: y}}
       - {id: x, type: space, size: {tensor_id: input, axis_id: x}}
     data: {type: float32, range: [null, null]}
+    sample_tensor: {source: test-output.npy}
     test_tensor: {source: test-output.npy}
 weights:
   pytorch_state_dict:

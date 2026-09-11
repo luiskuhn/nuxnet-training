@@ -42,7 +42,15 @@ def _descriptors(value: Any):
 
 def _copy_declared_artifacts(rdf: dict[str, Any], base: Path, output: Path) -> None:
     """Copy local template artifacts, preserving their RDF-relative locations."""
-    for descriptor in _descriptors(rdf):
+    state_descriptor = rdf.get("weights", {}).get("pytorch_state_dict", {})
+    descriptors = [
+        state_descriptor.get("architecture"),
+        state_descriptor.get("dependencies"),
+        *rdf.get("covers", []),
+    ]
+    for descriptor in descriptors:
+        if not isinstance(descriptor, dict) or not isinstance(descriptor.get("source"), str):
+            continue
         relative = Path(descriptor["source"])
         if relative.is_absolute() or ".." in relative.parts:
             raise ValueError(f"RDF artifact source must be a safe relative path: {relative}")
