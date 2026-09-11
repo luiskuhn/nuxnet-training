@@ -104,6 +104,8 @@ def build_model_package(
     _copy_declared_artifacts(rdf, specification.parent, output)
 
     weights = rdf.get("weights", {})
+    if set(weights) != {"pytorch_state_dict"}:
+        raise ValueError("prototype supports only pytorch_state_dict weights")
     state_descriptor = weights.get("pytorch_state_dict")
     if not isinstance(state_descriptor, dict):
         raise ValueError("specification requires weights.pytorch_state_dict")
@@ -119,6 +121,19 @@ def build_model_package(
         _checkpoint_state(checkpoint, state_dict_key, strip_prefix), strict=True
     )
     model.eval()
+    input_paths, expected_paths = _as_paths(test_input), _as_paths(test_output)
+    if len(input_paths) != 1 or len(expected_paths) != 1:
+        raise ValueError("prototype inference verification supports exactly one input and output")
+    inference_input = torch.from_numpy(np.load(input_paths[0], allow_pickle=False))
+    expected_output = np.load(expected_paths[0], allow_pickle=False)
+    with torch.inference_mode():
+        actual_output = model(inference_input).detach().cpu().numpy()
+    if actual_output.shape != expected_output.shape or not np.allclose(
+        actual_output, expected_output, rtol=1e-4, atol=1e-5
+    ):
+        raise ValueError(
+            "strictly reloaded state dict does not reproduce the supplied test output"
+        )
     weight_path = output / state_descriptor["source"]
     weight_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(model.state_dict(), weight_path)  # nosec B614: tensors only
@@ -145,17 +160,6 @@ def build_model_package(
         if not extra.is_file():
             raise FileNotFoundError(f"extra package file not found: {extra}")
         shutil.copy2(extra, output / extra.name)
-
-    torchscript = weights.get("torchscript")
-    if torchscript:
-        if trace_input is None:
-            raise ValueError("--trace-input is required when the RDF declares torchscript")
-        example = torch.from_numpy(np.load(trace_input, allow_pickle=False))
-        with torch.inference_mode():
-            traced = torch.jit.trace(model, example)
-        traced_path = output / torchscript["source"]
-        traced_path.parent.mkdir(parents=True, exist_ok=True)
-        traced.save(str(traced_path))
 
     rdf["timestamp"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     rdf_path = output / "rdf.yaml"
@@ -205,11 +209,12 @@ def build_model_package(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--specification", type=Path, required=True)
-    parser.add_argument("--checkpoint", type=Path, required=True)
-    parser.add_argument("--test-input", type=Path, action="append", required=True)
-    parser.add_argument("--test-output", type=Path, action="append", required=True)
-    parser.add_argument("--model-card", type=Path, required=True)
+    parser.add_argument("--run-artifacts-dir", type=Path)
+    parser.add_argument("--specification", type=Path)
+    parser.add_argument("--checkpoint", type=Path)
+    parser.add_argument("--test-input", type=Path, action="append")
+    parser.add_argument("--test-output", type=Path, action="append")
+    parser.add_argument("--model-card", type=Path)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--provenance", type=Path)
     parser.add_argument("--state-dict-key")
@@ -225,6 +230,25 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
+    if args.run_artifacts_dir:
+        directory = args.run_artifacts_dir
+        conventional = {
+            "specification": directory / "model-package.yaml",
+            "checkpoint": directory / "weights.pt",
+            "test_input": [directory / "test-input.npy"],
+            "test_output": [directory / "test-output.npy"],
+            "model_card": directory / "README.md",
+            "provenance": directory / "run-provenance.json",
+        }
+        for name, value in conventional.items():
+            if getattr(args, name) is not None:
+                raise SystemExit(f"--run-artifacts-dir cannot be combined with --{name.replace('_', '-')}")
+            setattr(args, name, value)
+        args.extra_file.append(directory / "cli-parameters.json")
+    missing = [name for name in ("specification", "checkpoint", "test_input", "test_output", "model_card")
+               if getattr(args, name) is None]
+    if missing:
+        raise SystemExit("missing required packaging arguments: " + ", ".join(missing))
     output, archive = build_model_package(
         args.specification,
         args.checkpoint,
