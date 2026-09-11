@@ -18,6 +18,12 @@ def _specification(root):
     path = root / "source.yaml"
     path.write_text(yaml.safe_dump({
         "type": "model",
+        "inputs": [{"axes": ["batch", "channel", "z", "y", "x"],
+                    "sample_tensor": {"source": "sample-input.tif"},
+                    "test_tensor": {"source": "test-input.npy"}}],
+        "outputs": [{"axes": ["batch", "channel", "z", "y", "x"],
+                     "sample_tensor": {"source": "sample-output.tif"},
+                     "test_tensor": {"source": "test-output.npy"}}],
         "covers": [{"source": "docs/images/graph_abstract_nuxnet_training.png"}],
         "weights": {"pytorch_state_dict": {
             "source": "weights.pt",
@@ -48,6 +54,8 @@ def test_artifacts_capture_direct_model_boundary(tmp_path):
     np.testing.assert_array_equal(sample_input, sample.numpy()[0, 0])
     np.testing.assert_array_equal(sample_output, model(sample).detach().numpy()[0])
     assert json.loads((output / "cli-parameters.json").read_text())["parent_model"] == "run-1"
+    samples = json.loads((output / "run-provenance.json").read_text())["sample_tensors"]
+    assert [sample["tiff_axes"] for sample in samples] == ["ZYX", "CZYX"]
     assert (
         output / "docs" / "images" / "graph_abstract_nuxnet_training.png"
     ).read_bytes() == b"local cover"
