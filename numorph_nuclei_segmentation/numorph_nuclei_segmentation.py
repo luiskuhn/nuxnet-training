@@ -8,7 +8,6 @@ from pathlib import Path
 
 import mlflow
 import pytorch_lightning as pl
-import torch
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
 from rich import print
@@ -20,6 +19,7 @@ from numorph_nuclei_segmentation.data_loading.data_loader import (
 )
 from numorph_nuclei_segmentation.mlf_core.mlf_core import MLFCore
 from numorph_nuclei_segmentation.model.model import NumorphSegmentator
+from nidavellir_tools.run_artifacts import prepare_model_package_artifacts
 
 
 def parse_target_voxel_size(value: str) -> tuple[float, float, float]:
@@ -257,6 +257,31 @@ def build_parser():
         default=0.5,
         help="Probability of an exact 0/90/180/270-degree XY rotation",
     )
+    parser.add_argument(
+        "--model-package-staging-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Directory for the fixed post-training model-package inputs; defaults "
+            "to model-package-inputs below the training output directory"
+        ),
+    )
+    parser.add_argument(
+        "--model-package-rdf",
+        type=Path,
+        default=Path(__file__).resolve().parents[1] / "model-package.yaml",
+        help="BioImage.IO RDF template whose local architecture files are staged",
+    )
+    parser.add_argument(
+        "--model-card",
+        type=Path,
+        help="Optional README/model card; otherwise the bundled minimal card is used",
+    )
+    parser.add_argument(
+        "--overwrite-model-package",
+        action="store_true",
+        help="Replace a nonempty model-package staging directory",
+    )
     return parser
 
 
@@ -286,7 +311,17 @@ def main():
         "/mlruns" if "MLF_CORE_DOCKER_RUN" in os.environ else "lightning_logs"
     )
     checkpoint = ModelCheckpoint(
-        dirpath=output / "checkpoints", save_top_k=1, monitor="val_iou_1", mode="max"
+        dirpath=output / "checkpoints",
+        # Keep persisted checkpoint names shell-friendly and stable. Disabling
+        # Lightning's automatic metric-name insertion avoids its default
+        # ``epoch=459-step=5980.ckpt`` style while the epoch placeholder still
+        # identifies the selected validation epoch.
+        filename="epoch_{epoch}",
+        auto_insert_metric_name=False,
+        enable_version_counter=False,
+        save_top_k=1,
+        monitor="val_iou_1",
+        mode="max",
     )
     lr_monitor = LearningRateMonitor(logging_interval="epoch")
     devices = int(args.devices) if args.devices.isdigit() else args.devices
@@ -306,18 +341,42 @@ def main():
         check_val_every_n_epoch=args.test_epochs,
     )
     trainer.fit(model, datamodule=data)
+
+    # Capture a real post-pipeline sample rather than constructing an example
+    # tensor. Calling the training loader here includes its normal volume loading,
+    # resampling, normalization, patch selection, cropping, and augmentation.
+    image, _ = next(iter(data.train_dataloader()))
+    sample_input = image[:1]
+
+    # The staging helper deliberately receives the bare UNet3D. Its saved output
+    # is therefore the direct public model boundary (raw logits), without any
+    # Lightning step logic, metrics, softmax, argmax, or checkpoint restoration.
+    # fit() leaves model.model holding the final in-memory parameters, which can
+    # differ from the best validation checkpoint used by test() below.
+    if trainer.is_global_zero:
+        staging_dir = args.model_package_staging_dir or output / "model-package-inputs"
+        parent = None
+        if args.parent_metadata:
+            # Carry the verified parent's selection metadata into the child run's
+            # compact provenance without inventing a second lineage schema.
+            parent = json.loads(Path(args.parent_metadata).read_text(encoding="utf-8"))
+        completed = prepare_model_package_artifacts(
+            model.model,
+            sample_input,
+            vars(args),
+            args.model_package_rdf,
+            staging_dir,
+            model_card_path=args.model_card,
+            provenance=parent,
+        )
+        # Log the directory exactly once: nonzero ranks neither write the shared
+        # path nor create duplicate MLflow artifacts.
+        mlflow.log_artifacts(str(completed), artifact_path="model-package-inputs")
+
+    # No rank may begin checkpoint-based testing while rank zero is still reading
+    # the fitted model and writing its state dictionary.
+    trainer.strategy.barrier("model-package-artifacts")
     trainer.test(model, datamodule=data, ckpt_path="best")
-    checkpoint_state = torch.load(
-        checkpoint.best_model_path, map_location="cpu", weights_only=True
-    )["state_dict"]
-    inference_state = {
-        key.removeprefix("model."): value
-        for key, value in checkpoint_state.items()
-        if key.startswith("model.")
-    }
-    inference_checkpoint = output / "numorph_unet3d.pt"
-    torch.save(inference_state, inference_checkpoint)  # nosec B614
-    mlflow.log_artifact(str(inference_checkpoint), artifact_path="model")
     mlflow.end_run()
     print(f"[bold blue]TensorBoard logs: [bold green]{output}")
 

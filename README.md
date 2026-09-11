@@ -88,7 +88,7 @@ docker run --rm \
   --max_epochs 100 --accelerator cpu --devices 1
 ```
 
-For an NVIDIA GPU, install the NVIDIA Container Toolkit and add `--gpus all` to `docker run`, then pass `--accelerator gpu --devices 1`. The best inference-compatible model is written to the mounted `mlruns/numorph_unet3d.pt`; Lightning checkpoints and TensorBoard events are stored below the same directory.
+For an NVIDIA GPU, install the NVIDIA Container Toolkit and add `--gpus all` to `docker run`, then pass `--accelerator gpu --devices 1`. Model-package inputs are written to the mounted `mlruns/model-package-inputs`; Lightning checkpoints and TensorBoard events are stored below the same directory.
 
 ## Hyperparameters
 
@@ -265,11 +265,15 @@ With Docker, mount both directories and run the same tool at `/app/tools/export_
 
 | Output | Docker location |
 | --- | --- |
-| Inference state dictionary | `/mlruns/numorph_unet3d.pt` |
+| Model-package staging inputs | `/mlruns/model-package-inputs/` |
 | Best Lightning checkpoint | `/mlruns/checkpoints/` |
 | TensorBoard events | `/mlruns/lightning_logs/` |
 
-The state dictionary contains the plain `UNet3D` weights expected by `nuxnet-inference`; use its `--classes 2` option. Dependencies are pinned to Python 3.12, PyTorch 2.5.1, NumPy 1.26.4 and tifffile 2024.8.30. This project is released under the MIT license.
+The staging directory contains the final in-memory plain `UNet3D` state dictionary and the exact model-ready training sample and raw-logit output captured immediately after fitting. Dependencies are pinned to Python 3.12, PyTorch 2.5.1, NumPy 1.26.4 and tifffile 2024.8.30. This project is released under the MIT license.
+
+The retained best Lightning checkpoint uses the shell-friendly name
+`epoch_<number>.ckpt` (for example, `epoch_459.ckpt`). The epoch is zero-based,
+matching Lightning's logged `epoch` value; only the best checkpoint is retained.
 
 ## FAIR model packaging and transfer learning
 
@@ -290,51 +294,176 @@ NuxNet profile and must be reviewed for each released run.
 
 ### Package quick start
 
-From the repository root, prepare a checkpoint, model card, and representative
-input/output `.npy` fixtures, then run:
+The following hypothetical end-to-end example runs every project command in the
+locally built `nuxnet-training:local` container. It uses the dataset ZIP at
+`$PWD/dataset/NUMORPH_SEM_SEG_DATASET.zip` and persists each run below
+`$PWD/runs`. Replace the hyperparameters and model-card metadata with values
+appropriate for a real release. The RDF and model card must contain accurate
+authorship, citation, license, and scientific-use information before
+publication.
+
+Build the image and create the host directories first:
 
 ```bash
-python nidavellir_tools/build_model_package.py \
-  --specification model-package.yaml \
-  --checkpoint lightning_logs/checkpoints/best.ckpt \
-  --state-dict-key state_dict --strip-prefix model. \
-  --test-input validation/test-input.npy \
-  --test-output validation/test-output.npy \
-  --model-card validation/README.md \
-  --trace-input validation/model-ready-input.npy \
-  --extra-file LICENSE \
-  --output-dir output/model
-
-python nidavellir_tools/model_package_registry.py inspect output/model
-(cd output/model && sha256sum --check SHA256SUMS)
+sudo docker build -t nuxnet-training:local .
+mkdir -p runs/test_full_fold3 exports parent-model release
 ```
 
-Stage the resulting archive and smoke-test a loading path:
+#### 1. Train and capture the parent run
+
+The training command automatically captures the final in-memory model, one
+actual augmented training sample, and its direct raw logits. `--model-card` is
+optional; omitting it uses the bundled minimal README, which is useful for a
+smoke test but is not a suitable public model card.
 
 ```bash
-python nidavellir_tools/model_package_registry.py stage \
-  output/model.zip .model-cache/local-model
-
-python nidavellir_tools/model_package_registry.py load \
-  .model-cache/local-model --representation pytorch_state_dict \
-  --weights-output work/parent.pt \
-  --metadata-output work/parent.json
-
-python nidavellir_tools/model_package_registry.py validate output/model.zip
+sudo docker run --rm \
+  --shm-size=8g \
+  --name nuxnet-test_full-fold3 \
+  --gpus all \
+  -v "$PWD/dataset:/data:ro" \
+  -v "$PWD/runs/test_full_fold3:/mlruns" \
+  -v "$PWD/release:/release:ro" \
+  nuxnet-training:local \
+  --dataset-path /data/NUMORPH_SEM_SEG_DATASET.zip \
+  --accelerator gpu \
+  --devices 2 \
+  --strategy ddp \
+  --max_epochs 500 \
+  --lr 0.0002 \
+  --lr-scheduler-factor 0.5 \
+  --lr-scheduler-patience 4 \
+  --lr-scheduler-threshold 0.001 \
+  --lr-scheduler-cooldown 1 \
+  --validation-fold 3 \
+  --model-card /release/README.md \
+  --model-package-staging-dir /mlruns/model-package-inputs
 ```
 
-For transfer learning, pass the paired weights and metadata produced by `load`:
+When rerunning into that same staging path, either choose a fresh directory or
+explicitly add `--overwrite-model-package`. The latter deletes the existing
+staging contents.
+
+#### 2. Build and validate the portable package
+
+The builder strictly reloads `weights.pt` into the RDF architecture and checks
+that inference reproduces the staged `test-output.npy`. It creates both the
+unpacked `/exports/nuxnet-model` directory and `/exports/nuxnet-model.zip`:
 
 ```bash
-mlflow run . \
-  -P initial-weights=work/parent.pt \
-  -P parent-metadata=work/parent.json \
-  -P dataset-path=/new-data
+sudo docker run --rm \
+  --name nuxnet-package_full-fold3 \
+  -v "$PWD/runs/test_full_fold3:/mlruns:ro" \
+  -v "$PWD/exports:/exports" \
+  nuxnet-training:local \
+  python nidavellir_tools/build_model_package.py \
+    --run-artifacts-dir /mlruns/model-package-inputs \
+    --output-dir /exports/nuxnet-model
+
+sudo docker run --rm \
+  --name nuxnet-validate_full-fold3 \
+  -v "$PWD/exports:/exports:ro" \
+  nuxnet-training:local \
+  bash -lc 'python -m pip install bioimageio.core && \
+    bioimageio test /exports/nuxnet-model.zip'
 ```
 
-Both options are mandatory together. Treat packaged Python architecture code as
-executable code: inspect and trust it before loading. BioImage.IO validation is a
-technical check, not evidence of scientific validity.
+The validation example installs `bioimageio.core` into its disposable container
+because it is intentionally not a training dependency. Pin a reviewed validator
+version in a release or CI workflow rather than relying on the latest version.
+
+After this command succeeds, submit the ZIP through the BioImage Model Zoo
+contribution workflow. The unpacked directory has `README.md` at its root and is
+also laid out as a custom Hugging Face model repository. For example, after
+installing and authenticating the Hugging Face CLI, a hypothetical upload is:
+
+```bash
+sudo docker run --rm \
+  --name nuxnet-upload_full-fold3 \
+  -e HF_TOKEN \
+  -v "$PWD/exports:/exports:ro" \
+  nuxnet-training:local \
+  bash -lc 'python -m pip install huggingface_hub && \
+    hf upload YOUR_ORGANIZATION/nuxnet-model \
+      /exports/nuxnet-model . --repo-type model'
+```
+
+Publishing is deliberately separate from this prototype: review all generated
+files and use the destination's normal authentication and review process. The
+builder's explicit `--specification`, `--checkpoint`, `--test-input`,
+`--test-output`, and `--model-card` arguments remain available for custom
+workflows.
+
+#### 3. Extract verified parent initialization files
+
+The child training interface intentionally consumes a tensor-only state
+dictionary together with metadata that binds it to the package checksum. Load
+from the **unpacked** package directory (not directly from the ZIP):
+
+```bash
+sudo docker run --rm \
+  --name nuxnet-extract-parent_full-fold3 \
+  -v "$PWD/exports:/exports:ro" \
+  -v "$PWD/parent-model:/parent-model" \
+  nuxnet-training:local \
+  python nidavellir_tools/model_package_registry.py load \
+    /exports/nuxnet-model \
+    --representation pytorch_state_dict \
+    --weights-output /parent-model/weights.pt \
+    --metadata-output /parent-model/metadata.json
+```
+
+For a package downloaded as a ZIP, stage it before loading:
+
+```bash
+mkdir -p downloaded-parent
+sudo docker run --rm \
+  -v "$PWD/downloads:/downloads:ro" \
+  -v "$PWD/downloaded-parent:/unpacked-parent" \
+  nuxnet-training:local \
+  python nidavellir_tools/model_package_registry.py stage \
+    /downloads/nuxnet-model.zip /unpacked-parent
+```
+
+Then mount `downloaded-parent` and substitute `/unpacked-parent` for
+`/exports/nuxnet-model` in the previous `load` command.
+
+#### 4. Run child training from the parent state
+
+Pass both extracted files to the next run. The trainer verifies the recorded
+SHA-256 before strictly loading the parent state into a newly constructed
+`UNet3D`; consequently `--n-channels`, `--n-class`, and `--dropout-rate` must
+remain architecture-compatible with the parent RDF.
+
+```bash
+mkdir -p runs/child_fold3
+sudo docker run --rm \
+  --shm-size=8g \
+  --name nuxnet-child_fold3 \
+  --gpus all \
+  -v "$PWD/child-dataset:/data:ro" \
+  -v "$PWD/parent-model:/parent-model:ro" \
+  -v "$PWD/runs/child_fold3:/mlruns" \
+  -v "$PWD/release:/release:ro" \
+  nuxnet-training:local \
+  --dataset-path /data/CHILD_DATASET.zip \
+  --initial-weights /parent-model/weights.pt \
+  --parent-metadata /parent-model/metadata.json \
+  --accelerator gpu \
+  --devices 2 \
+  --strategy ddp \
+  --max_epochs 500 \
+  --validation-fold 3 \
+  --model-card /release/CHILD_README.md \
+  --model-package-staging-dir /mlruns/model-package-inputs
+```
+
+The child staging provenance embeds the verified parent metadata, and the child
+can be built with the same builder command by changing `--run-artifacts-dir` and
+`--output-dir`. Both parent options are mandatory together. Treat packaged
+Python architecture code as executable code: inspect and trust it before
+loading. BioImage.IO validation is a technical check, not evidence of
+scientific validity.
 
 ## Development and documentation
 
