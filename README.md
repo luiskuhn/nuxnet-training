@@ -281,6 +281,7 @@ The reusable commands live in [`nidavellir_tools/`](nidavellir_tools/):
 
 | Command | Responsibility |
 | --- | --- |
+| `create_sample_tensors.py` | Regenerate RDF-driven TIFF samples from exact staged `.npy` tensors without retraining. |
 | `build_model_package.py` | Build a new FAIR package from a declarative BioImage.IO RDF specification, a PyTorch checkpoint, test tensors, a model card, and optional provenance. |
 | `model_package_registry.py` | Stage, verify, inspect, load, derive, validate, and publish an existing package. |
 
@@ -291,6 +292,45 @@ then see the [FAIR packaging guide](docs/fair_model_packages.rst) for the packag
 contract, transfer-learning workflow, security boundaries, and publication
 checklist. The root [`model-package.yaml`](model-package.yaml) is the concrete
 NuxNet profile and must be reviewed for each released run.
+
+### Exact test tensors and presentation TIFFs
+
+The two artifact types serve different purposes:
+
+* `test-input.npy` and `test-output.npy` are the authoritative model-boundary
+  tensors. They keep the batch dimension and contain the exact model input and
+  raw output used to verify a package.
+* `sample-input.tif` and `sample-output.tif` are image-readable presentation
+  samples derived from one selected batch item. Creating them does not normalize,
+  classify, or otherwise modify the values in the `.npy` files.
+
+Training creates both forms automatically. The standalone command is needed only
+to recreate missing samples or choose a different batch/channel presentation
+from an existing `model-package-inputs` directory; it does not load the model or
+repeat training. The directory must contain `model-package.yaml` and the `.npy`
+files named by its `test_tensor.source` fields. TIFF destinations are taken from
+the corresponding `sample_tensor.source` fields.
+
+```bash
+python nidavellir_tools/create_sample_tensors.py \
+  --run-artifacts-dir /mlruns/model-package-inputs \
+  --sample-layout auto \
+  --sample-batch-index 0 \
+  --sample-channel-policy squeeze-singleton
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--sample-layout auto` | Recommended. Resolve each input and output independently from its RDF axes and reorder it to conventional TIFF axes. |
+| `--sample-layout bcyx` or `bczyx` | Require an exact 2-D or 3-D RDF layout. The generic Nidavellir command supports both; NuxNet training exposes only `auto` and `bczyx` because NuxNet is 3-D. |
+| `--sample-batch-index N` | Store batch item `N`; the default is `0`. |
+| `--sample-channel-policy squeeze-singleton` | Remove the channel axis only when its size is one, producing `YX` or `ZYX`. This is the default. |
+| `--sample-channel-policy preserve` | Keep the channel axis, producing `CYX` or `CZYX`. Multiple channels are always retained. |
+
+The command rejects incompatible RDF axes, ranks, or batch indices instead of
+guessing. It records the resolved model axes, stored TIFF axes, chosen batch,
+channel policy, and filenames in `run-provenance.json`. It reads but never
+overwrites the `.npy` tensors.
 
 ### Container-only technical smoke test
 
@@ -374,6 +414,24 @@ missing = [name for name in required if not (p / name).is_file()]
 assert not missing, f"missing staged artifacts: {missing}"
 print("parent staging artifacts: passed")'
 ```
+
+The optional regeneration step below demonstrates the same command in the
+container. The mount is writable because the TIFFs and provenance are updated:
+
+```bash
+sudo docker run --rm \
+  --entrypoint python \
+  -v "$PARENT_RUN:/mlruns" \
+  "$IMAGE" \
+  nidavellir_tools/create_sample_tensors.py \
+  --run-artifacts-dir /mlruns/model-package-inputs \
+  --sample-layout auto \
+  --sample-batch-index 0 \
+  --sample-channel-policy squeeze-singleton
+```
+
+See [Exact test tensors and presentation TIFFs](#exact-test-tensors-and-presentation-tiffs)
+for when regeneration is needed and how each option affects the stored sample.
 
 #### 2. Build, inspect, and officially validate the parent package
 

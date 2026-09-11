@@ -51,6 +51,9 @@ entry_points:
       patches-per-volume: {type: int, default: 8}
       foreground-patch-probability: {type: float, default: 0.8}
       random-rotation-degrees: {type: float, default: 10.0}
+      sample-layout: {type: string, default: "auto"}
+      sample-batch-index: {type: int, default: 0}
+      sample-channel-policy: {type: string, default: "squeeze-singleton"}
       random-rotation-90-probability: {type: float, default: 0.5}
     command: |
           python -m numorph_nuclei_segmentation.numorph_nuclei_segmentation \
@@ -88,5 +91,8 @@ entry_points:
             --patches-per-volume {patches-per-volume} \
             --foreground-patch-probability {foreground-patch-probability} \
             --random-rotation-degrees {random-rotation-degrees} \
+            --sample-layout {sample-layout} \
+            --sample-batch-index {sample-batch-index} \
+            --sample-channel-policy {sample-channel-policy} \
             --random-rotation-90-probability {random-rotation-90-probability} \
             {normalize-input}
