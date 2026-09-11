@@ -49,7 +49,6 @@ def test_builds_domain_independent_repository_package(tmp_path):
                                  "kwargs": {"features": 2}},
                 "dependencies": {"source": "environment.yml"},
             },
-            "torchscript": {"source": "model.ts", "parent": "pytorch_state_dict"},
         },
     }, sort_keys=False), encoding="utf-8")
     checkpoint = tmp_path / "trained.ckpt"
@@ -69,17 +68,15 @@ def test_builds_domain_independent_repository_package(tmp_path):
     package, archive = builder.build_model_package(
         specification, checkpoint, test_input, test_output, card, tmp_path / "package",
         provenance=provenance, state_dict_key="state_dict", strip_prefix="network.",
-        trace_input=test_input,
     )
     rdf = yaml.safe_load((package / "rdf.yaml").read_text())
     recorded = json.loads((package / "provenance.json").read_text())
 
     assert archive.is_file()
-    assert {"rdf.yaml", "README.md", "weights.pt", "model.ts", "test-input.npy",
+    assert {"rdf.yaml", "README.md", "weights.pt", "test-input.npy",
             "test-output.npy", "network.py", "environment.yml", "provenance.json",
             "SHA256SUMS"} <= {path.name for path in package.iterdir()}
     assert rdf["weights"]["pytorch_state_dict"]["sha256"] == builder._digest(package / "weights.pt")
-    assert rdf["weights"]["torchscript"]["sha256"] == builder._digest(package / "model.ts")
     assert recorded["training"]["run_id"] == "run-123"
     assert recorded["training"]["checkpoint_sha256"] == builder._digest(checkpoint)
 

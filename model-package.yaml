@@ -18,7 +18,7 @@ cite:
     url: https://github.com/luiskuhn/nuxnet-training
 inputs:
   - id: input
-    description: Raw intensity volume
+    description: Normalized, model-ready volume
     axes:
       - {type: batch, size: 1}
       - {type: channel, channel_names: [intensity]}
@@ -26,24 +26,17 @@ inputs:
       - {id: y, type: space, size: {min: 4, step: 4}}
       - {id: x, type: space, size: {min: 4, step: 4}}
     data: {type: float32, range: [null, null]}
-    preprocessing:
-      - {id: ensure_dtype, kwargs: {dtype: float32}}
-      - id: scale_range
-        kwargs: {axes: [z, y, x], min_percentile: 0.0, max_percentile: 100.0}
     test_tensor: {source: test-input.npy}
 outputs:
-  - id: probabilities
-    description: Background and marker probabilities
+  - id: logits
+    description: Unrestricted raw background and marker logits
     axes:
       - {type: batch}
       - {type: channel, channel_names: [background, marker]}
       - {id: z, type: space, size: {tensor_id: input, axis_id: z}}
       - {id: y, type: space, size: {tensor_id: input, axis_id: y}}
       - {id: x, type: space, size: {tensor_id: input, axis_id: x}}
-    data: {type: float32, range: [0.0, 1.0]}
-    postprocessing:
-      - {id: softmax, kwargs: {axis: channel}}
-      - {id: ensure_dtype, kwargs: {dtype: float32}}
+    data: {type: float32, range: [null, null]}
     test_tensor: {source: test-output.npy}
 weights:
   pytorch_state_dict:
@@ -54,10 +47,6 @@ weights:
       kwargs: {in_channels: 1, classes: 2, dropout: 0.1}
     dependencies:
       source: environment.yml
-    pytorch_version: 2.5.1
-  torchscript:
-    source: model.ts
-    parent: pytorch_state_dict
     pytorch_version: 2.5.1
 config:
   project:
