@@ -296,77 +296,44 @@ checklist. The root
 is the concrete
 NuxNet profile and must be reviewed for each released run.
 
-### Exact test tensors and presentation TIFFs
+### Container-only 10+10-epoch transfer-learning test
 
-The two artifact types serve different purposes:
+Run these steps in order from the repository root. This intentionally limits the
+number of volumes and patches: it tests the workflow, not model quality. Folds may
+leak related specimens, metrics need not be bitwise identical, only weights
+transfer, and export uses the final state while testing uses the best checkpoint.
 
-* `test-input.npy` and `test-output.npy` are the authoritative model-boundary
-  tensors. They keep the batch dimension and contain the exact model input and
-  raw output used to verify a package.
-* `sample-input.tif` and `sample-output.tif` are image-readable presentation
-  samples derived from one selected batch item. Creating them does not normalize,
-  classify, or otherwise modify the values in the `.npy` files.
-
-Training creates both forms automatically. The standalone command is needed only
-to recreate missing samples or choose a different batch/channel presentation
-from an existing `model-package-inputs` directory; it does not load the model or
-repeat training. The directory must contain `model-package.yaml` and the `.npy`
-files named by its `test_tensor.source` fields. TIFF destinations are taken from
-the corresponding `sample_tensor.source` fields.
+#### 1. Set up the environment
 
 ```bash
-python nidavellir_tools/create_sample_tensors.py \
-  --run-artifacts-dir /mlruns/model-package-inputs \
-  --sample-layout auto \
-  --sample-batch-index 0 \
-  --sample-channel-policy squeeze-singleton
-```
-
-| Option | Meaning |
-| --- | --- |
-| `--sample-layout auto` | Recommended. Resolve each input and output independently from its RDF axes and reorder it to conventional TIFF axes. |
-| `--sample-layout bcyx` or `bczyx` | Require an exact 2-D or 3-D RDF layout. The generic Nidavellir command supports both; NuxNet training exposes only `auto` and `bczyx` because NuxNet is 3-D. |
-| `--sample-batch-index N` | Store batch item `N`; the default is `0`. |
-| `--sample-channel-policy squeeze-singleton` | Remove the channel axis only when its size is one, producing `YX` or `ZYX`. This is the default. |
-| `--sample-channel-policy preserve` | Keep the channel axis, producing `CYX` or `CZYX`. Multiple channels are always retained. |
-
-The command rejects incompatible RDF axes, ranks, or batch indices instead of
-guessing. It records the resolved model axes, stored TIFF axes, chosen batch,
-channel policy, and filenames in `run-provenance.json`. It reads but never
-overwrites the `.npy` tensors.
-
-### Container-only technical smoke test
-
-This is the successfully tested parent-package → child-fine-tuning path. It uses
-the existing `dataset/NUMORPH_SEM_SEG_DATASET.zip`, two CUDA GPUs, and deliberately
-tiny data/epoch limits. Run **all blocks in order in the same host shell** so the
-variables remain defined. Apart from defining variables and creating persistent
-mount directories, every operation (including Python checks) runs in a container.
-
-```bash
-IMAGE=nuxnet-training:local
+IMAGE="nuxnet-training:transfer-smoke-7d1ffb4"
 RUN_TAG="$(date -u +%Y%m%dT%H%M%SZ)"
-PARENT_RUN="$PWD/runs/parent-$RUN_TAG"
-PARENT_STAGE="$PWD/runs/parent-stage-$RUN_TAG"
-PARENT_INIT="$PWD/runs/parent-init-$RUN_TAG"
-CHILD_RUN="$PWD/runs/child-$RUN_TAG"
-EXPORTS="$PWD/exports/$RUN_TAG"
+
+PARENT_RUN="$PWD/runs/transfer-$RUN_TAG-parent-fold3"
+PARENT_STAGE="$PWD/runs/transfer-$RUN_TAG-parent-stage"
+PARENT_INIT="$PWD/runs/transfer-$RUN_TAG-parent-init"
+CHILD_RUN="$PWD/runs/transfer-$RUN_TAG-child-fold4"
+EXPORTS="$PWD/exports/transfer-$RUN_TAG"
+
 PARENT_PACKAGE_NAME="nuxnet-parent-fold3-$RUN_TAG"
 CHILD_PACKAGE_NAME="nuxnet-child-fold4-$RUN_TAG"
 
-mkdir -p "$PARENT_RUN" "$PARENT_STAGE" "$PARENT_INIT" "$CHILD_RUN" "$EXPORTS"
+mkdir -p \
+  "$PARENT_RUN" \
+  "$PARENT_STAGE" \
+  "$PARENT_INIT" \
+  "$CHILD_RUN" \
+  "$EXPORTS"
+
 sudo docker build --tag "$IMAGE" .
 ```
 
-#### 1. Train and check the parent artifacts
-
-The explicit staging path is `/mlruns/model-package-inputs`. Do not add
-`--model-card`: omission intentionally selects the bundled smoke-test template.
-The two GPUs use DDP, while `--test-epochs 1` validates every epoch.
+#### 2. Train the parent for 10 epochs
 
 ```bash
 sudo docker run --rm \
   --shm-size=8g \
+  --name "nuxnet-parent-$RUN_TAG" \
   --gpus all \
   -v "$PWD/dataset:/data:ro" \
   -v "$PARENT_RUN:/mlruns" \
@@ -375,9 +342,13 @@ sudo docker run --rm \
   --accelerator gpu \
   --devices 2 \
   --strategy ddp \
-  --max_epochs 4 \
+  --max_epochs 10 \
   --lr 0.0002 \
-  --validation-fold 3 \
+  --lr-scheduler-factor 0.5 \
+  --lr-scheduler-patience 4 \
+  --lr-scheduler-threshold 0.001 \
+  --lr-scheduler-cooldown 1 \
+  --min-lr 0.000001 \
   --target-voxel-spacing 3.0,1.0,1.0 \
   --patch-size 32,128,128 \
   --training-batch-size 2 \
@@ -385,62 +356,70 @@ sudo docker run --rm \
   --patches-per-volume 2 \
   --max-training-volumes 4 \
   --max-validation-volumes 2 \
-  --test-epochs 1 \
-  --dice-loss-weight 1.0 \
+  --foreground-patch-probability 0.8 \
   --ce-loss-weight 0.5 \
+  --dice-loss-weight 1.0 \
   --class-weights 0.25,1.0 \
+  --n-channels 1 \
+  --n-class 2 \
   --dropout-rate 0.10 \
   --random-rotation-degrees 7.5 \
   --random-rotation-90-probability 0.5 \
   --inference-overlap 0.0 \
+  --cross-validation-folds 5 \
+  --validation-fold 3 \
+  --test-epochs 1 \
+  --general-seed 0 \
+  --pytorch-seed 0 \
   --num_workers 0 \
+  --log-interval 1 \
+  --sample-layout auto \
+  --sample-batch-index 0 \
+  --sample-channel-policy squeeze-singleton \
   --model-package-staging-dir /mlruns/model-package-inputs
 ```
 
-Check every conventional input plus the RDF-declared architecture, environment,
-and cover. This also confirms that TIFF presentation samples accompany the exact
-`.npy` model-boundary tensors.
+#### 3. Verify the staged parent artifacts
 
 ```bash
 sudo docker run --rm \
   --entrypoint python \
   -v "$PARENT_RUN:/mlruns:ro" \
   "$IMAGE" \
-  -c 'from pathlib import Path
+  -c 'import json
+from pathlib import Path
+import numpy as np
+
 p = Path("/mlruns/model-package-inputs")
-required = ["weights.pt", "test-input.npy", "test-output.npy",
-            "sample-input.tif", "sample-output.tif", "cli-parameters.json",
-            "run-provenance.json", "model-package.yaml", "README.md",
-            "environment.yml", "numorph_nuclei_segmentation/model/unet_3d_models.py",
-            "docs/images/graph_abstract_nuxnet_training.png"]
+required = [
+    "weights.pt", "test-input.npy", "test-output.npy",
+    "sample-input.tif", "sample-output.tif", "cli-parameters.json",
+    "run-provenance.json", "model-package.yaml", "README.md",
+    "environment.yml",
+    "numorph_nuclei_segmentation/model/unet_3d_models.py",
+    "docs/images/graph_abstract_nuxnet_training.png",
+]
 missing = [name for name in required if not (p / name).is_file()]
-assert not missing, f"missing staged artifacts: {missing}"
-print("parent staging artifacts: passed")'
+assert not missing, f"Missing artifacts: {missing}"
+
+x = np.load(p / "test-input.npy", allow_pickle=False)
+y = np.load(p / "test-output.npy", allow_pickle=False)
+cli = json.loads((p / "cli-parameters.json").read_text())
+provenance = json.loads((p / "run-provenance.json").read_text())
+assert x.ndim == 5 and y.ndim == 5
+assert x.shape[0] == 1 and y.shape[0] == 1
+assert cli["max_epochs"] == 10 and cli["validation_fold"] == 3
+assert provenance["weights_sha256"]
+assert len(provenance["sample_tensors"]) == 2
+print("Parent staging: PASSED")
+print("Input:", x.shape, x.dtype)
+print("Output:", y.shape, y.dtype)
+print("Weights SHA-256:", provenance["weights_sha256"])'
 ```
 
-The optional regeneration step below demonstrates the same command in the
-container. The mount is writable because the TIFFs and provenance are updated:
+#### 4. Build and inspect the parent package
 
-```bash
-sudo docker run --rm \
-  --entrypoint python \
-  -v "$PARENT_RUN:/mlruns" \
-  "$IMAGE" \
-  nidavellir_tools/create_sample_tensors.py \
-  --run-artifacts-dir /mlruns/model-package-inputs \
-  --sample-layout auto \
-  --sample-batch-index 0 \
-  --sample-channel-policy squeeze-singleton
-```
-
-See [Exact test tensors and presentation TIFFs](#exact-test-tensors-and-presentation-tiffs)
-for when regeneration is needed and how each option affects the stored sample.
-
-#### 2. Build, inspect, and officially validate the parent package
-
-`--run-artifacts-dir` makes the builder strictly reload `weights.pt` and compare
-its inference with `test-output.npy`; it produces an unpacked directory and ZIP.
-Inspect the unpacked directory, not the ZIP.
+Build both an unpacked package and a ZIP, then inspect the unpacked package:
 
 ```bash
 sudo docker run --rm \
@@ -458,26 +437,26 @@ sudo docker run --rm \
   "$IMAGE" \
   nidavellir_tools/model_package_registry.py inspect \
   "/exports/$PARENT_PACKAGE_NAME"
+```
 
+#### 5. Validate the parent with BioImage.IO
+
+```bash
 sudo docker run --rm \
   --entrypoint bash \
   -v "$EXPORTS:/exports:ro" \
   "$IMAGE" \
   -lc "python -m pip install --quiet --no-cache-dir bioimageio.core==0.11.0 &&
-       bioimageio test /exports/$PARENT_PACKAGE_NAME.zip"
+       bioimageio test '/exports/$PARENT_PACKAGE_NAME.zip'"
 ```
 
-`bioimageio.core` is intentionally not a project dependency; the validator is
-installed only in this disposable container. A transient MLflow/`packaging` or
-NumPy environment-comparison warning may appear. Success is determined by the
-final BioImage.IO `status: passed` and exact test-output reproduction.
+The validation container is disposable, so temporary packaging/MLflow or NumPy
+comparison warnings can be ignored. The important result is `status: passed`,
+including successful reproduction of `test-output.npy`.
 
-#### 3. Exercise ZIP staging and export parent initialization
+#### 6. Stage the ZIP and extract transfer-learning inputs
 
-This deliberately tests ZIP consumption. First stage the ZIP into
-`PARENT_STAGE`; **never pass the ZIP directly to `inspect` or `load`**. Load only
-the verified staged directory, exporting the tensor-only state dictionary and
-checksum-bound metadata under the requested stable names.
+This explicitly tests consuming the packaged ZIP:
 
 ```bash
 sudo docker run --rm \
@@ -486,7 +465,8 @@ sudo docker run --rm \
   -v "$PARENT_STAGE:/parent-stage" \
   "$IMAGE" \
   nidavellir_tools/model_package_registry.py stage \
-  "/exports/$PARENT_PACKAGE_NAME.zip" /parent-stage
+  "/exports/$PARENT_PACKAGE_NAME.zip" \
+  /parent-stage
 
 sudo docker run --rm \
   --entrypoint python \
@@ -498,21 +478,34 @@ sudo docker run --rm \
   --representation pytorch_state_dict \
   --weights-output /parent-init/initial-weights.pt \
   --metadata-output /parent-init/parent-metadata.json
+
+sudo docker run --rm \
+  --entrypoint python \
+  -v "$PARENT_INIT:/parent-init:ro" \
+  "$IMAGE" \
+  -c 'import json
+from pathlib import Path
+weights = Path("/parent-init/initial-weights.pt")
+metadata_path = Path("/parent-init/parent-metadata.json")
+assert weights.is_file() and metadata_path.is_file()
+metadata = json.loads(metadata_path.read_text())
+assert metadata["representation"] == "pytorch_state_dict"
+assert metadata["weights_sha256"]
+print("Parent initialization export: PASSED")
+print("Representation:", metadata["representation"])
+print("Weights SHA-256:", metadata["weights_sha256"])'
 ```
 
-Packaged Python architecture files are executable code. Inspect and trust them
-before this load step (the earlier `inspect` verifies integrity, not trust).
+#### 7. Run the child for 10 epochs
 
-#### 4. Fine-tune the child on fold 4 and verify lineage
-
-Training parameters are not inherited from the parent, so all relevant settings
-are repeated explicitly. Architecture-compatible channel counts and dropout are
-also explicit. The extracted parent mount is read-only, and both parent options
-are required together.
+The child repeats all relevant hyperparameters because they are recorded but not
+automatically inherited. Only model weights transfer; optimizer, scheduler, and
+epoch state start fresh.
 
 ```bash
 sudo docker run --rm \
   --shm-size=8g \
+  --name "nuxnet-child-$RUN_TAG" \
   --gpus all \
   -v "$PWD/dataset:/data:ro" \
   -v "$PARENT_INIT:/parent-init:ro" \
@@ -524,9 +517,13 @@ sudo docker run --rm \
   --accelerator gpu \
   --devices 2 \
   --strategy ddp \
-  --max_epochs 4 \
+  --max_epochs 10 \
   --lr 0.00005 \
-  --validation-fold 4 \
+  --lr-scheduler-factor 0.5 \
+  --lr-scheduler-patience 4 \
+  --lr-scheduler-threshold 0.001 \
+  --lr-scheduler-cooldown 1 \
+  --min-lr 0.000001 \
   --target-voxel-spacing 3.0,1.0,1.0 \
   --patch-size 32,128,128 \
   --training-batch-size 2 \
@@ -534,9 +531,9 @@ sudo docker run --rm \
   --patches-per-volume 2 \
   --max-training-volumes 4 \
   --max-validation-volumes 2 \
-  --test-epochs 1 \
-  --dice-loss-weight 1.0 \
+  --foreground-patch-probability 0.8 \
   --ce-loss-weight 0.5 \
+  --dice-loss-weight 1.0 \
   --class-weights 0.25,1.0 \
   --n-channels 1 \
   --n-class 2 \
@@ -544,29 +541,49 @@ sudo docker run --rm \
   --random-rotation-degrees 7.5 \
   --random-rotation-90-probability 0.5 \
   --inference-overlap 0.0 \
+  --cross-validation-folds 5 \
+  --validation-fold 4 \
+  --test-epochs 1 \
+  --general-seed 0 \
+  --pytorch-seed 0 \
   --num_workers 0 \
+  --log-interval 1 \
+  --sample-layout auto \
+  --sample-batch-index 0 \
+  --sample-channel-policy squeeze-singleton \
   --model-package-staging-dir /mlruns/model-package-inputs
+```
 
+The program validates the parent checksum before training and loads its state
+dictionary with `strict=True`; incompatible or modified weights fail immediately.
+
+#### 8. Verify child lineage
+
+```bash
 sudo docker run --rm \
   --entrypoint python \
   -v "$CHILD_RUN:/mlruns:ro" \
+  -v "$PARENT_INIT:/parent-init:ro" \
   "$IMAGE" \
   -c 'import json
 from pathlib import Path
 p = Path("/mlruns/model-package-inputs")
-provenance = json.loads((p / "run-provenance.json").read_text())
 cli = json.loads((p / "cli-parameters.json").read_text())
-assert "parent_model" in provenance
-assert provenance["parent_model"]["representation"] == "pytorch_state_dict"
-assert provenance["parent_model"]["weights_sha256"]
-assert "provenance" in provenance["parent_model"]
+provenance = json.loads((p / "run-provenance.json").read_text())
+parent_metadata = json.loads(Path("/parent-init/parent-metadata.json").read_text())
+parent = provenance.get("parent_model")
+assert parent, "Missing parent_model provenance"
+assert parent["representation"] == "pytorch_state_dict"
+assert parent["weights_sha256"] == parent_metadata["weights_sha256"]
 assert cli["initial_weights"] == "/parent-init/initial-weights.pt"
 assert cli["parent_metadata"] == "/parent-init/parent-metadata.json"
-assert cli["validation_fold"] == 4
-print("child lineage: passed")'
+assert cli["max_epochs"] == 10 and cli["validation_fold"] == 4
+print("Parent-to-child transfer: PASSED")
+print("Parent representation:", parent["representation"])
+print("Parent weights SHA-256:", parent["weights_sha256"])'
 ```
 
-#### 5. Build, inspect, and officially validate the child package
+#### 9. Package and validate the child
 
 ```bash
 sudo docker run --rm \
@@ -590,19 +607,9 @@ sudo docker run --rm \
   -v "$EXPORTS:/exports:ro" \
   "$IMAGE" \
   -lc "python -m pip install --quiet --no-cache-dir bioimageio.core==0.11.0 &&
-       bioimageio test /exports/$CHILD_PACKAGE_NAME.zip"
+       bioimageio test '/exports/$CHILD_PACKAGE_NAME.zip'"
 ```
 
-The smoke test succeeds when parent and child training complete; both packages
-build and finish official validation with `status: passed`; the `.npy` tensors
-exactly reproduce raw model outputs; both TIFF samples are present; and the
-parent checksum and provenance survive into the child. Low IoU from four epochs
-and limited data is expected and is **not** a scientific performance result.
-
-Current export captures the final in-memory model, whereas `trainer.test()`
-evaluates the best checkpoint. Production releases require full training,
-independent evaluation, an accurate model card, a real citation, and distinct
-versions for distinct releases.
 
 ### Optional publication (not part of the smoke test)
 
