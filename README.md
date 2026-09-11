@@ -203,13 +203,13 @@ Change one variable at a time and compare the held-out nucleus IoU using the sam
 
 `--dataset-path` may be an extracted directory or ZIP containing BioImage Archive-style tables. `images.tsv` requires `image_id` and `filename`; `annotations.tsv` requires `image_id` and `filename` (an `annotation_id` is recommended):
 
-```tsv
+```text
 # images.tsv
 image_id	filename
 sample-001	images/sample-001.ome.tiff
 ```
 
-```tsv
+```text
 # annotations.tsv
 annotation_id	image_id	filename
 mask-001	sample-001	annotations/sample-001.ome.tiff
@@ -277,7 +277,8 @@ matching Lightning's logged `epoch` value; only the best checkpoint is retained.
 
 ## FAIR model packaging and transfer learning
 
-The reusable commands live in [`nidavellir_tools/`](nidavellir_tools/):
+The reusable commands live in
+[`nidavellir_tools/`](https://github.com/luiskuhn/nuxnet-training/tree/main/nidavellir_tools):
 
 | Command | Responsibility |
 | --- | --- |
@@ -287,10 +288,12 @@ The reusable commands live in [`nidavellir_tools/`](nidavellir_tools/):
 
 The tools are application-independent; scientific metadata and tensor semantics
 come from the project's RDF specification and model card. Start from the
-[annotated example specification](nidavellir_tools/examples/model-package.example.yaml),
+[annotated example specification](https://github.com/luiskuhn/nuxnet-training/blob/main/nidavellir_tools/examples/model-package.example.yaml),
 then see the [FAIR packaging guide](docs/fair_model_packages.rst) for the package
 contract, transfer-learning workflow, security boundaries, and publication
-checklist. The root [`model-package.yaml`](model-package.yaml) is the concrete
+checklist. The root
+[`model-package.yaml`](https://github.com/luiskuhn/nuxnet-training/blob/main/model-package.yaml)
+is the concrete
 NuxNet profile and must be reviewed for each released run.
 
 ### Exact test tensors and presentation TIFFs
