@@ -258,6 +258,15 @@ def build_parser():
         help="Probability of an exact 0/90/180/270-degree XY rotation",
     )
     parser.add_argument(
+        "--sample-layout", choices=("auto", "bczyx"), default="auto"
+    )
+    parser.add_argument("--sample-batch-index", type=int, default=0)
+    parser.add_argument(
+        "--sample-channel-policy",
+        choices=("squeeze-singleton", "preserve"),
+        default="squeeze-singleton",
+    )
+    parser.add_argument(
         "--model-package-staging-dir",
         type=Path,
         default=None,
@@ -368,6 +377,9 @@ def main():
             staging_dir,
             model_card_path=args.model_card,
             provenance=parent,
+            sample_layout=args.sample_layout,
+            sample_batch_index=args.sample_batch_index,
+            sample_channel_policy=args.sample_channel_policy,
         )
         # Log the directory exactly once: nonzero ranks neither write the shared
         # path nor create duplicate MLflow artifacts.

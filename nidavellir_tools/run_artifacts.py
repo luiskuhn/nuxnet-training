@@ -11,9 +11,10 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import tifffile
 import torch
 import yaml
+
+from nidavellir_tools.sample_tensors import create_sample_tensor
 
 __all__ = ["prepare_model_package_artifacts"]
 
@@ -78,6 +79,9 @@ def prepare_model_package_artifacts(
     output_dir,
     model_card_path=None,
     provenance=None,
+    sample_layout="auto",
+    sample_batch_index=0,
+    sample_channel_policy="squeeze-singleton",
 ) -> Path:
     """Stage a fitted bare PyTorch model and its exact direct inference pair."""
     specification_path, output_dir = Path(specification_path), Path(output_dir)
@@ -117,20 +121,31 @@ def prepare_model_package_artifacts(
         raw_output = model(sample_input.to(device))
     output_array = raw_output.detach().cpu().numpy()
     np.save(output_dir / "test-output.npy", output_array)
-    # BioImage.IO 0.5 test tensors preserve the complete model boundary, while
-    # sample tensors must use an imageio-readable format.  Keep their values
-    # raw: only remove the singleton batch/input-channel axes required by the
-    # sample TIFF's ZYX/CZYX representation.
-    tifffile.imwrite(
-        output_dir / "sample-input.tif",
-        input_array[0, 0].astype(np.float32, copy=False),
-        photometric="minisblack",
-    )
-    tifffile.imwrite(
-        output_dir / "sample-output.tif",
-        output_array[0].astype(np.float32, copy=False),
-        photometric="minisblack",
-    )
+
+    # The NPY files above are the exact model boundary and remain authoritative.
+    # TIFFs below are separate, RDF-driven presentation views of one batch item.
+    inputs, outputs = rdf.get("inputs"), rdf.get("outputs")
+    if not isinstance(inputs, list) or len(inputs) != 1:
+        raise ValueError("artifact staging requires exactly one RDF input tensor")
+    if not isinstance(outputs, list) or len(outputs) != 1:
+        raise ValueError("artifact staging requires exactly one RDF output tensor")
+    sample_records = []
+    for array, tensor, fallback in (
+        (input_array, inputs[0], "sample-input.tif"),
+        (output_array, outputs[0], "sample-output.tif"),
+    ):
+        descriptor = tensor.get("sample_tensor", {})
+        filename = descriptor.get("source", fallback)
+        sample_records.append(
+            create_sample_tensor(
+                array,
+                tensor.get("axes"),
+                output_dir / filename,
+                layout=sample_layout,
+                batch_index=sample_batch_index,
+                channel_policy=sample_channel_policy,
+            )
+        )
     (output_dir / "cli-parameters.json").write_text(
         json.dumps(parameters, separators=(",", ":"), sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -141,6 +156,7 @@ def prepare_model_package_artifacts(
         "weights_sha256": _sha256(weights),
         "input": {"shape": list(input_array.shape), "dtype": str(input_array.dtype)},
         "output": {"shape": list(output_array.shape), "dtype": str(output_array.dtype)},
+        "sample_tensors": sample_records,
     }
     if provenance:
         parent = (
