@@ -347,7 +347,10 @@ staging contents.
 #### 2. Build and validate the portable package
 
 The builder strictly reloads `weights.pt` into the RDF architecture and checks
-that inference reproduces the staged `test-output.npy`. It creates both the
+that inference reproduces the staged `test-output.npy`. The `.npy` test pair
+retains the exact batched model input and raw output; separate float32 TIFF
+samples contain the input as ZYX and the raw output as CZYX, with no
+normalization, softmax, argmax, or visualization transform. It creates both the
 unpacked `/exports/nuxnet-model` directory and `/exports/nuxnet-model.zip`:
 
 ```bash

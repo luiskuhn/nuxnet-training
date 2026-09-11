@@ -2,6 +2,7 @@ import json
 
 import numpy as np
 import pytest
+import tifffile
 import torch
 import yaml
 
@@ -28,8 +29,8 @@ def _specification(root):
 
 
 def test_artifacts_capture_direct_model_boundary(tmp_path):
-    model = torch.nn.Linear(2, 2, bias=False)
-    sample = torch.tensor([[1.0, 4.0]], dtype=torch.float32)
+    model = torch.nn.Conv3d(1, 2, kernel_size=1, bias=False)
+    sample = torch.arange(24, dtype=torch.float32).reshape(1, 1, 2, 3, 4)
     output = prepare_model_package_artifacts(
         model, sample, {"parent_model": "run-1"}, _specification(tmp_path),
         tmp_path / "stage", provenance={"id": "parent"},
@@ -39,11 +40,19 @@ def test_artifacts_capture_direct_model_boundary(tmp_path):
     np.testing.assert_array_equal(
         np.load(output / "test-output.npy"), model(sample).detach().numpy()
     )
+    sample_input = tifffile.imread(output / "sample-input.tif")
+    sample_output = tifffile.imread(output / "sample-output.tif")
+    assert sample_input.shape == (2, 3, 4)
+    assert sample_output.shape == (2, 2, 3, 4)
+    assert sample_input.dtype == sample_output.dtype == np.float32
+    np.testing.assert_array_equal(sample_input, sample.numpy()[0, 0])
+    np.testing.assert_array_equal(sample_output, model(sample).detach().numpy()[0])
     assert json.loads((output / "cli-parameters.json").read_text())["parent_model"] == "run-1"
     assert (
         output / "docs" / "images" / "graph_abstract_nuxnet_training.png"
     ).read_bytes() == b"local cover"
     assert {"model-package.yaml", "README.md", "weights.pt", "network.py",
+            "sample-input.tif", "sample-output.tif",
             "environment.yml", "run-provenance.json"} <= {
                 path.name for path in output.rglob("*")
             }

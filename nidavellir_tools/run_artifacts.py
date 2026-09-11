@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import tifffile
 import torch
 import yaml
 
@@ -116,6 +117,20 @@ def prepare_model_package_artifacts(
         raw_output = model(sample_input.to(device))
     output_array = raw_output.detach().cpu().numpy()
     np.save(output_dir / "test-output.npy", output_array)
+    # BioImage.IO 0.5 test tensors preserve the complete model boundary, while
+    # sample tensors must use an imageio-readable format.  Keep their values
+    # raw: only remove the singleton batch/input-channel axes required by the
+    # sample TIFF's ZYX/CZYX representation.
+    tifffile.imwrite(
+        output_dir / "sample-input.tif",
+        input_array[0, 0].astype(np.float32, copy=False),
+        photometric="minisblack",
+    )
+    tifffile.imwrite(
+        output_dir / "sample-output.tif",
+        output_array[0].astype(np.float32, copy=False),
+        photometric="minisblack",
+    )
     (output_dir / "cli-parameters.json").write_text(
         json.dumps(parameters, separators=(",", ":"), sort_keys=True) + "\n", encoding="utf-8"
     )

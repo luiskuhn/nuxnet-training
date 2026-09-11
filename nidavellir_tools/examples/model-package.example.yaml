@@ -30,6 +30,8 @@ inputs:
     data: {type: float32, range: [null, null]}
     preprocessing:
       - {id: ensure_dtype, kwargs: {dtype: float32}}
+    # Imageio-readable visualization-free sample, copied from beside this RDF.
+    sample_tensor: {source: sample-input.tif}
     # Replaced by the corresponding --test-input, in RDF input order.
     test_tensor: {source: test-input.npy}
 outputs:
@@ -44,6 +46,8 @@ outputs:
     # Add the transforms actually used by the exported model, if any.
     postprocessing:
       - {id: ensure_dtype, kwargs: {dtype: float32}}
+    # Imageio-readable visualization-free sample, copied from beside this RDF.
+    sample_tensor: {source: sample-output.tif}
     # Replaced by the corresponding --test-output, in RDF output order.
     test_tensor: {source: test-output.npy}
 weights:
