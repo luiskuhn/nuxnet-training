@@ -50,7 +50,12 @@ def _git_commit(directory: Path) -> str | None:
 
 def _copy_rdf_dependencies(rdf: dict[str, Any], base: Path, output: Path) -> None:
     state = rdf.get("weights", {}).get("pytorch_state_dict", {})
-    for descriptor in (state.get("architecture"), state.get("dependencies")):
+    descriptors = (
+        state.get("architecture"),
+        state.get("dependencies"),
+        *rdf.get("covers", []),
+    )
+    for descriptor in descriptors:
         if not isinstance(descriptor, dict) or not isinstance(descriptor.get("source"), str):
             continue
         relative = Path(descriptor["source"])
