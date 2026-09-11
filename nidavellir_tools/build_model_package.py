@@ -59,6 +59,24 @@ def _copy_declared_artifacts(rdf: dict[str, Any], base: Path, output: Path) -> N
         if source.is_file():
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)
+    sample_descriptors = (
+        tensor.get("sample_tensor")
+        for field in ("inputs", "outputs")
+        for tensor in rdf.get(field, [])
+        if isinstance(tensor, dict)
+    )
+    for descriptor in sample_descriptors:
+        if not isinstance(descriptor, dict) or not isinstance(descriptor.get("source"), str):
+            raise ValueError("every RDF tensor requires a local sample_tensor source")
+        relative = Path(descriptor["source"])
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError(f"RDF artifact source must be a safe relative path: {relative}")
+        source = base / relative
+        if not source.is_file():
+            raise FileNotFoundError(f"declared sample_tensor artifact not found: {source}")
+        destination = output / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
 
 
 def _refresh_hashes(rdf: dict[str, Any], output: Path) -> None:

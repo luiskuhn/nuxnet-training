@@ -28,7 +28,7 @@ inputs:
       - {id: y, type: space, size: {min: 4, step: 4}}
       - {id: x, type: space, size: {min: 4, step: 4}}
     data: {type: float32, range: [null, null]}
-    sample_tensor: {source: test-input.npy}
+    sample_tensor: {source: sample-input.tif}
     test_tensor: {source: test-input.npy}
 outputs:
   - id: logits
@@ -40,7 +40,7 @@ outputs:
       - {id: y, type: space, size: {tensor_id: input, axis_id: y}}
       - {id: x, type: space, size: {tensor_id: input, axis_id: x}}
     data: {type: float32, range: [null, null]}
-    sample_tensor: {source: test-output.npy}
+    sample_tensor: {source: sample-output.tif}
     test_tensor: {source: test-output.npy}
 weights:
   pytorch_state_dict:
