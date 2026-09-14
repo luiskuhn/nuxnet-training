@@ -279,7 +279,10 @@ matching Lightning's logged `epoch` value; only the best checkpoint is retained.
 
 For the switch from bundled utilities to the PyPI dependency, see the
 [migration and GPU VM test checklist](docs/nidavellir_migration.md). The pinned
-`0.2.0` release must be available on PyPI before installation or container rebuild.
+`0.3.0` release must be available on PyPI before installation or container rebuild.
+This branch assumes that release includes structured BioImage.IO validation from
+[Nidavellir PR #7](https://github.com/luiskuhn/nidavellir-tools/pull/7).
+Do not use these new report/build flags with version 0.2.0.
 
 The reusable commands are installed from the pinned PyPI dependency
 [`nidavellir-tools`](https://github.com/luiskuhn/nidavellir-tools). No bundled copy
@@ -311,7 +314,8 @@ transfer, and export uses the final state while testing uses the best checkpoint
 #### 1. Set up the environment
 
 ```bash
-IMAGE="nuxnet-training:transfer-smoke-7d1ffb4"
+IMAGE="nuxnet-training:local"
+VALIDATION_IMAGE="nuxnet-training:local-validation"
 RUN_TAG="$(date -u +%Y%m%dT%H%M%SZ)"
 
 PARENT_RUN="$PWD/runs/transfer-$RUN_TAG-parent-fold3"
@@ -319,6 +323,7 @@ PARENT_STAGE="$PWD/runs/transfer-$RUN_TAG-parent-stage"
 PARENT_INIT="$PWD/runs/transfer-$RUN_TAG-parent-init"
 CHILD_RUN="$PWD/runs/transfer-$RUN_TAG-child-fold4"
 EXPORTS="$PWD/exports/transfer-$RUN_TAG"
+REPORTS="$PWD/reports/transfer-$RUN_TAG"
 
 PARENT_PACKAGE_NAME="nuxnet-parent-fold3-$RUN_TAG"
 CHILD_PACKAGE_NAME="nuxnet-child-fold4-$RUN_TAG"
@@ -328,9 +333,19 @@ mkdir -p \
   "$PARENT_STAGE" \
   "$PARENT_INIT" \
   "$CHILD_RUN" \
-  "$EXPORTS"
+  "$EXPORTS" \
+  "$REPORTS"
 
 sudo docker build --tag "$IMAGE" .
+
+# Keep validator dependencies outside the training image. Rebuild after upgrades.
+sudo docker build --build-arg TRAINING_IMAGE="$IMAGE" \
+  --tag "$VALIDATION_IMAGE" -f - . <<'DOCKERFILE'
+ARG TRAINING_IMAGE
+FROM ${TRAINING_IMAGE}
+RUN python -m pip install --no-cache-dir -r /app/requirements.txt "nidavellir-tools[bioimageio]==0.3.0" \
+    && python -m pip check
+DOCKERFILE
 ```
 
 #### 2. Train the parent for 10 epochs
@@ -446,18 +461,26 @@ sudo docker run --rm \
 
 #### 5. Validate the parent with BioImage.IO
 
+`inspect` checks declared hashes; official validation additionally checks the
+BioImage.IO specification and runs inference tests. The default is CPU and
+`pytorch_state_dict` in the validator container's active environment.
+
 ```bash
 sudo docker run --rm \
-  --entrypoint bash \
+  --entrypoint nidavellir \
   -v "$EXPORTS:/exports:ro" \
-  "$IMAGE" \
-  -lc "python -m pip install --quiet --no-cache-dir bioimageio.core==0.11.0 &&
-       bioimageio test '/exports/$PARENT_PACKAGE_NAME.zip'"
+  -v "$REPORTS:/reports" \
+  "$VALIDATION_IMAGE" \
+  validate "/exports/$PARENT_PACKAGE_NAME.zip" \
+  --report "/reports/$PARENT_PACKAGE_NAME.json"
 ```
 
-The validation container is disposable, so temporary packaging/MLflow or NumPy
-comparison warnings can be ignored. The important result is `status: passed`,
-including successful reproduction of `test-output.npy`.
+Require `status: passed` and a successful exit code before continuing. Review
+warnings and errors in the persisted JSON report; do not ignore them merely because
+the container is disposable. The report includes the package digest, validator
+versions, settings, and official test details. `failed` and `error` both stop the
+command. Choose a new report filename when retrying: existing reports are not
+overwritten. Packages are mounted read-only, and reports survive container removal.
 
 #### 6. Stage the ZIP and extract transfer-learning inputs
 
@@ -608,13 +631,45 @@ sudo docker run --rm \
   "/exports/$CHILD_PACKAGE_NAME"
 
 sudo docker run --rm \
-  --entrypoint bash \
+  --entrypoint nidavellir \
   -v "$EXPORTS:/exports:ro" \
-  "$IMAGE" \
-  -lc "python -m pip install --quiet --no-cache-dir bioimageio.core==0.11.0 &&
-       bioimageio test '/exports/$CHILD_PACKAGE_NAME.zip'"
+  -v "$REPORTS:/reports" \
+  "$VALIDATION_IMAGE" \
+  validate "/exports/$CHILD_PACKAGE_NAME.zip" \
+  --report "/reports/$CHILD_PACKAGE_NAME.json"
 ```
 
+### Optional: require validation during package construction
+
+As an alternative to the separate build step, use the validation image and a
+fresh output/report name:
+
+```bash
+sudo docker run --rm \
+  --entrypoint nidavellir \
+  -v "$CHILD_RUN:/mlruns:ro" \
+  -v "$EXPORTS:/exports" \
+  -v "$REPORTS:/reports" \
+  "$VALIDATION_IMAGE" \
+  build \
+  --run-artifacts-dir /mlruns/model-package-inputs \
+  --output-dir "/exports/$CHILD_PACKAGE_NAME-validated" \
+  --validate-bioimageio \
+  --validation-report "/reports/$CHILD_PACKAGE_NAME-build.json"
+```
+
+Validation occurs before a new ZIP is created. On failure the unpacked directory
+and report remain for diagnosis; no new archive is produced. An older archive is
+not deleted, so use fresh paths. A build report fingerprints the directory; the
+separate `validate ...zip` command fingerprints the ZIP bytes. Keep reports outside
+the package and repeat checks after editing any artifacts. Upgrading Nidavellir
+alone does not automatically enable these checks.
+
+Official validation executes trusted model code and may access network resources;
+it is not a sandbox. It tests the current environment, not automatic recreation of
+`environment.yml`, GPU compatibility, scientific quality, or Zoo acceptance.
+Training/loader code and normal training commands are unchanged. Model versions
+and scientific metadata still need explicit review before publication.
 
 ### Optional publication (not part of the smoke test)
 
