@@ -277,18 +277,23 @@ matching Lightning's logged `epoch` value; only the best checkpoint is retained.
 
 ## FAIR model packaging and transfer learning
 
-The reusable commands live in
-[`nidavellir_tools/`](https://github.com/luiskuhn/nuxnet-training/tree/main/nidavellir_tools):
+For the switch from bundled utilities to the PyPI dependency, see the
+[migration and GPU VM test checklist](docs/nidavellir_migration.md). The pinned
+`0.2.0` release must be available on PyPI before installation or container rebuild.
+
+The reusable commands are installed from the pinned PyPI dependency
+[`nidavellir-tools`](https://github.com/luiskuhn/nidavellir-tools). No bundled copy
+is retained in this repository:
 
 | Command | Responsibility |
 | --- | --- |
-| `create_sample_tensors.py` | Regenerate RDF-driven TIFF samples from exact staged `.npy` tensors without retraining. |
-| `build_model_package.py` | Build a new FAIR package from a declarative BioImage.IO RDF specification, a PyTorch checkpoint, test tensors, a model card, and optional provenance. |
-| `model_package_registry.py` | Stage, verify, inspect, load, derive, validate, and publish an existing package. |
+| `nidavellir samples` | Regenerate RDF-driven TIFF samples from exact staged `.npy` tensors without retraining. |
+| `nidavellir build` | Build a new FAIR package from a declarative BioImage.IO RDF specification, a PyTorch checkpoint, test tensors, a model card, and optional provenance. |
+| `nidavellir stage/inspect/load/...` | Stage, verify, inspect, load, derive, validate, and publish an existing package. |
 
 The tools are application-independent; scientific metadata and tensor semantics
 come from the project's RDF specification and model card. Start from the
-[annotated example specification](https://github.com/luiskuhn/nuxnet-training/blob/main/nidavellir_tools/examples/model-package.example.yaml),
+[annotated example specification](https://github.com/luiskuhn/nidavellir-tools/blob/dev/src/nidavellir_tools/examples/model-package.example.yaml),
 then see the [FAIR packaging guide](docs/fair_model_packages.rst) for the package
 contract, transfer-learning workflow, security boundaries, and publication
 checklist. The root
@@ -423,19 +428,19 @@ Build both an unpacked package and a ZIP, then inspect the unpacked package:
 
 ```bash
 sudo docker run --rm \
-  --entrypoint python \
+  --entrypoint nidavellir \
   -v "$PARENT_RUN:/mlruns:ro" \
   -v "$EXPORTS:/exports" \
   "$IMAGE" \
-  nidavellir_tools/build_model_package.py \
+  build \
   --run-artifacts-dir /mlruns/model-package-inputs \
   --output-dir "/exports/$PARENT_PACKAGE_NAME"
 
 sudo docker run --rm \
-  --entrypoint python \
+  --entrypoint nidavellir \
   -v "$EXPORTS:/exports:ro" \
   "$IMAGE" \
-  nidavellir_tools/model_package_registry.py inspect \
+  inspect \
   "/exports/$PARENT_PACKAGE_NAME"
 ```
 
@@ -460,20 +465,20 @@ This explicitly tests consuming the packaged ZIP:
 
 ```bash
 sudo docker run --rm \
-  --entrypoint python \
+  --entrypoint nidavellir \
   -v "$EXPORTS:/exports:ro" \
   -v "$PARENT_STAGE:/parent-stage" \
   "$IMAGE" \
-  nidavellir_tools/model_package_registry.py stage \
+  stage \
   "/exports/$PARENT_PACKAGE_NAME.zip" \
   /parent-stage
 
 sudo docker run --rm \
-  --entrypoint python \
+  --entrypoint nidavellir \
   -v "$PARENT_STAGE:/parent-stage:ro" \
   -v "$PARENT_INIT:/parent-init" \
   "$IMAGE" \
-  nidavellir_tools/model_package_registry.py load \
+  load \
   /parent-stage \
   --representation pytorch_state_dict \
   --weights-output /parent-init/initial-weights.pt \
@@ -587,19 +592,19 @@ print("Parent weights SHA-256:", parent["weights_sha256"])'
 
 ```bash
 sudo docker run --rm \
-  --entrypoint python \
+  --entrypoint nidavellir \
   -v "$CHILD_RUN:/mlruns:ro" \
   -v "$EXPORTS:/exports" \
   "$IMAGE" \
-  nidavellir_tools/build_model_package.py \
+  build \
   --run-artifacts-dir /mlruns/model-package-inputs \
   --output-dir "/exports/$CHILD_PACKAGE_NAME"
 
 sudo docker run --rm \
-  --entrypoint python \
+  --entrypoint nidavellir \
   -v "$EXPORTS:/exports:ro" \
   "$IMAGE" \
-  nidavellir_tools/model_package_registry.py inspect \
+  inspect \
   "/exports/$CHILD_PACKAGE_NAME"
 
 sudo docker run --rm \
