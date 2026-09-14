@@ -43,7 +43,7 @@ provides these operations:
    nidavellir load .model-cache/example \
        --representation pytorch_state_dict \
        --weights-output work/parent.pt --metadata-output work/parent.json
-   nidavellir validate .model-cache/example
+   nidavellir validate .model-cache/example --report reports/example.json
    nidavellir publish-hf .model-cache/example owner/model
 
 Staging accepts one RDF package, rejects ZIP traversal, copies it to a stable
@@ -96,9 +96,56 @@ cache configuration.  Install ``huggingface_hub`` only for ``hf://`` staging or
 ``publish-hf``; MLflow is only needed for ``mlflow://``.  Local use has no new
 runtime dependency.  ``publish-hf`` creates a model repository if necessary and
 uploads the complete, verified directory rather than weights alone.  BioImage.IO
-submission remains intentionally review-gated: ``validate`` invokes the official
-``bioimageio test`` command, after which the ZIP is submitted through the Zoo's
-supported upload/review workflow.
+submission remains intentionally review-gated: with Nidavellir 0.3.0,
+``validate`` calls the official ``bioimageio.core.test_description`` API and
+returns structured results. After successful checks and scientific review, the ZIP
+is submitted through the Zoo's supported upload/review workflow.
+
+Structured official validation (requires Nidavellir 0.3.0)
+---------------------------------------------------------
+
+This feature requires the upcoming ``nidavellir-tools==0.3.0`` release containing
+the structured validation API. It is not available in 0.2.0. Install the optional
+extra in the packaging/validation environment, preserving NuxNet's requirements:
+
+.. code-block:: bash
+
+   python -m pip install -r requirements.txt "nidavellir-tools[bioimageio]==0.3.0"
+   python -m pip check
+   nidavellir validate output/child.zip --report reports/child.json
+
+``inspect`` checks declared artifact hashes, while the official validator checks
+metadata and runs inference tests against the declared model contract. Defaults
+are CPU, ``pytorch_state_dict`` weights, and the currently active environment.
+Only ``passed`` is successful. ``failed`` describes integrity/official check
+failures; ``error`` describes input, dependency, or execution problems. Both yield
+a nonzero CLI exit status. Reports retain official diagnostics, package digest,
+execution settings, and library versions.
+
+Use fresh external report paths: existing files cannot be overwritten. A directory
+digest and a ZIP-byte digest are different identities. Reports should remain
+outside the package; modifying artifacts requires fresh validation. Mount reports
+on a writable host directory when using disposable containers. The root README
+provides a separate validation image that installs the extra without changing
+the training image.
+
+Optionally gate package construction before ZIP creation:
+
+.. code-block:: bash
+
+   nidavellir build --run-artifacts-dir run/model-package-inputs \
+       --output-dir output/validated-child --validate-bioimageio \
+       --validation-report reports/validated-child.json
+
+On failure, the unpacked directory and report remain but no new ZIP is created.
+An old ZIP is not removed; use fresh destinations. ``export-child`` and
+``publish-hf`` do not invoke official validation automatically. Run checks on the
+final parent and child artifacts before publication.
+
+Only trusted models should be validated: their architecture code executes, and
+referenced resources can require network access. Testing uses a temporary copy,
+not a security sandbox. Current-environment validation does not demonstrate
+environment recreatability, GPU compatibility, or scientific accuracy.
 
 Full solution and boundaries
 ----------------------------
@@ -133,7 +180,8 @@ Operational acceptance checklist
 
 * Pin a source revision and retain checkpoint, source, dataset, and environment
   identifiers in provenance.
-* Verify all local RDF artifacts and run ``bioimageio test`` on the final package.
+* Verify declared artifact hashes and run ``nidavellir validate`` on the final
+  package. Require ``passed`` and retain the external JSON report with its digest.
 * Compare loaded-model output with the exported test fixture using declared
   preprocessing/postprocessing and tolerances.
 * Report held-out scientific metrics separately from technical execution tests.

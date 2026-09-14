@@ -1,17 +1,20 @@
 # Testing the PyPI Nidavellir migration
 
-This branch replaces the bundled `nidavellir_tools/` directory with
-`nidavellir-tools==0.2.0` in both dependency manifests. Dataset table discovery,
+The migration replaced the bundled `nidavellir_tools/` directory with a PyPI
+dependency. This follow-up pins `nidavellir-tools==0.3.0` in both manifests for
+the upcoming structured-validation release. Dataset table discovery,
 ZIP extraction, and OME-TIFF reading come from the installed package. Downloading,
 splitting, preprocessing, augmentation, model architecture, and training remain
 in NuxNet. The existing NuxNet MC-dropout helper is unchanged.
 
 ## Release prerequisite
 
-PyPI `0.2.0` is published and was installed successfully for the validation below.
-Do not downgrade to `0.1.0`: it lacks `data_loading`. If an index temporarily lists
-only the old release, retry with `--no-cache-dir --index-url https://pypi.org/simple`.
-Do not restore the bundled folder. Update both manifests together for future versions.
+Publish PyPI `0.3.0` with the structured-validation functionality before installing
+this branch or building its images. Version `0.2.0` supports the reader migration
+but not the new report/build flags; `0.1.0` lacks `data_loading` altogether.
+The results below are historical checks of `0.2.0`, not validation of `0.3.0`.
+Repeat the runtime checks against the actual new release. Do not restore the
+bundled folder. Update both manifests together for future versions.
 
 ## Verified CPU integration (2026-09-14)
 
@@ -34,10 +37,10 @@ From your existing NuxNet checkout, preserve any local changes before switching:
 
 ```bash
 git fetch origin
-git switch --track origin/feature/pypi-nidavellir-tools
+git switch --track origin/feature/bioimageio-validation-docs
 ```
 
-If the branch already exists locally, use `git switch feature/pypi-nidavellir-tools`
+If the branch already exists locally, use `git switch feature/bioimageio-validation-docs`
 and `git pull --ff-only` instead.
 
 ### Python environment
@@ -53,7 +56,7 @@ python -m pytest -q tests/test_nidavellir_integration.py tests/test_data_loader.
 python -m pytest -q
 ```
 
-The reported version should be `0.2.0` and the reader path should be inside the
+The reported version should be `0.3.0` and the reader path should be inside the
 environment, not inside this repository. Use `nidavellir --help` to check CLI
 installation. A previously observed failure in
 `test_new_cli_hyperparameters_are_serializable_and_range_checked` concerns JSON
