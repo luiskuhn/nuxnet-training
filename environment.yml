@@ -18,4 +18,4 @@ dependencies:
       - tensorboard==2.17.1
       - matplotlib==3.9.2
       - PyYAML==6.0.2
-      - nidavellir-tools==0.2.0
+      - nidavellir-tools==0.3.0
