@@ -214,7 +214,7 @@ def build_parser():
     parser.add_argument(
         "--parent-metadata",
         type=optional_path,
-        help="JSON metadata emitted with --initial-weights by nidavellir_tools/model_package_registry.py",
+        help="JSON metadata from nidavellir load --metadata-output, paired with --initial-weights",
     )
     parser.add_argument(
         "--patch-size",

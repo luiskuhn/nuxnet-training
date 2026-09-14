@@ -1,4 +1,4 @@
-import importlib.util
+from importlib.resources import files
 import io
 import json
 from pathlib import Path
@@ -10,14 +10,13 @@ import torch
 import yaml
 
 
-SCRIPT = Path(__file__).parents[1] / "nidavellir_tools" / "build_model_package.py"
-SPEC = importlib.util.spec_from_file_location("build_model_package", SCRIPT)
-builder = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(builder)
+from nidavellir_tools import build_model_package as builder
+
+PACKAGE_RESOURCES = files("nidavellir_tools")
 
 
 def test_project_rdf_has_fair_validation_metadata():
-    root = SCRIPT.parents[1]
+    root = Path(__file__).resolve().parents[1]
     rdf = yaml.safe_load((root / "model-package.yaml").read_text(encoding="utf-8"))
 
     assert rdf["format_version"] == "0.5.12"
@@ -31,14 +30,14 @@ def test_project_rdf_has_fair_validation_metadata():
 
 
 def test_default_model_card_has_validation_section():
-    card = (SCRIPT.parent / "model-card-template.md").read_text(encoding="utf-8")
+    card = PACKAGE_RESOURCES.joinpath("model-card-template.md").read_text(encoding="utf-8")
 
     assert "## Validation" in card
 
 
 def test_packaging_reference_is_valid_yaml_and_has_required_contract_sections():
     reference = yaml.safe_load(
-        (SCRIPT.parent / "examples" / "model-package.example.yaml").read_text()
+        PACKAGE_RESOURCES.joinpath("examples/model-package.example.yaml").read_text(encoding="utf-8")
     )
 
     assert reference["type"] == "model"

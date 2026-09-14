@@ -1,4 +1,3 @@
-import importlib.util
 import json
 from pathlib import Path
 
@@ -7,10 +6,7 @@ import torch
 import yaml
 
 
-SCRIPT = Path(__file__).parents[1] / "nidavellir_tools" / "model_package_registry.py"
-SPEC = importlib.util.spec_from_file_location("model_registry", SCRIPT)
-registry = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(registry)
+from nidavellir_tools import model_package_registry as registry
 
 
 def make_package(path: Path) -> Path:

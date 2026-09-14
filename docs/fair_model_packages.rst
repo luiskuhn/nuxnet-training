@@ -17,7 +17,7 @@ activation.  Those scientifically meaningful choices belong in the RDF and model
 card.  The shared implementation targets projects using PyTorch, Lightning,
 MLflow, NumPy, PyYAML, and the same checkpoint/package conventions.
 
-``nidavellir_tools/examples/model-package.example.yaml`` is the annotated,
+The upstream ``nidavellir-tools`` example specification is the annotated,
 domain-neutral structural reference shipped with the tools.  Consumers copy it
 into their project and replace every example value.  The repository-root
 ``model-package.yaml`` remains separate because it is the concrete NuxNet
@@ -27,24 +27,24 @@ example from becoming an accidental default.
 Implemented reusable layer
 --------------------------
 
-``nidavellir_tools/model_package_registry.py`` is deliberately independent from any application domain.  It treats the BioImage.IO RDF as the portable package contract and
+The installed ``nidavellir`` registry interface is deliberately independent from any application domain.  It treats the BioImage.IO RDF as the portable package contract and
 provides these operations:
 
 .. code-block:: bash
 
    # Local directory/ZIP or HTTP URL
-   python nidavellir_tools/model_package_registry.py stage model.zip .model-cache/example
+   nidavellir stage model.zip .model-cache/example
 
    # Immutable Hub revision, or an MLflow run artifact
-   python nidavellir_tools/model_package_registry.py stage hf://owner/model .model-cache/example --revision COMMIT
-   python nidavellir_tools/model_package_registry.py stage mlflow://RUN_ID/model .model-cache/example
+   nidavellir stage hf://owner/model .model-cache/example --revision COMMIT
+   nidavellir stage mlflow://RUN_ID/model .model-cache/example
 
-   python nidavellir_tools/model_package_registry.py inspect .model-cache/example
-   python nidavellir_tools/model_package_registry.py load .model-cache/example \
+   nidavellir inspect .model-cache/example
+   nidavellir load .model-cache/example \
        --representation pytorch_state_dict \
        --weights-output work/parent.pt --metadata-output work/parent.json
-   python nidavellir_tools/model_package_registry.py validate .model-cache/example
-   python nidavellir_tools/model_package_registry.py publish-hf .model-cache/example owner/model
+   nidavellir validate .model-cache/example
+   nidavellir publish-hf .model-cache/example owner/model
 
 Staging accepts one RDF package, rejects ZIP traversal, copies it to a stable
 destination, and checks every local artifact for which the RDF declares a
@@ -76,7 +76,7 @@ weight/documentation/test-output hashes, and records explicit parent lineage:
 
 .. code-block:: bash
 
-   python nidavellir_tools/model_package_registry.py export-child .model-cache/example \
+   nidavellir export-child .model-cache/example \
        lightning_logs/checkpoints/best.ckpt output/child \
        --state-dict-key state_dict --strip-prefix model. --version 2.0.0 \
        --parent-identifier hf://owner/model@COMMIT \
