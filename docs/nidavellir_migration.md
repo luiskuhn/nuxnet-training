@@ -8,11 +8,25 @@ in NuxNet. The existing NuxNet MC-dropout helper is unchanged.
 
 ## Release prerequisite
 
-At preparation time, PyPI only offered `0.1.0`; it lacks `data_loading`.
-Publish `0.2.0` containing the merged dataset-reader/uncertainty changes before
-installing this branch or rebuilding its training image. Do not downgrade to
-`0.1.0` or restore the bundled folder to work around an unavailable release.
-If a different version is published, update both manifests together.
+PyPI `0.2.0` is published and was installed successfully for the validation below.
+Do not downgrade to `0.1.0`: it lacks `data_loading`. If an index temporarily lists
+only the old release, retry with `--no-cache-dir --index-url https://pypi.org/simple`.
+Do not restore the bundled folder. Update both manifests together for future versions.
+
+## Verified CPU integration (2026-09-14)
+
+- Fresh Docker `python:3.12-slim` container on Linux ARM64, using PyPI
+  `nidavellir-tools==0.2.0` and this repository's pinned requirements.
+- `pip check`: no broken requirements.
+- Dataset-reader and uncertainty imports resolve to installed `site-packages`;
+  `nidavellir --help` succeeds.
+- Full suite: **82 passed, 1 failed** in 24.40 seconds. The failure is the
+  previously observed `test_new_cli_hyperparameters_are_serializable_and_range_checked`:
+  `PosixPath('/workspace/model-package.yaml')` is not JSON serializable.
+- Reader identity/resources tests, existing dataset tests, packaging tests, and
+  two-process CPU distributed tests passed. No local development wheel was used.
+- The NVIDIA CUDA/AMD64 production image, real-data GPU training, and full
+  parent-to-child transfer-learning workflow remain to be validated on the VM.
 
 ## On the GPU VM
 
